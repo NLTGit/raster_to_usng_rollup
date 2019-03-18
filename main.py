@@ -403,7 +403,7 @@ class RasterProcessor:
                 for match in glob.glob(input_file):
                     arcpy.Delete_management(match)
             else:
-                os.remove(input_file)
+                arcpy.Delete_management(input_file)
         except OSError:
             pass
 
