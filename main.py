@@ -3,6 +3,7 @@ import os
 import arcpy
 import glob
 import uuid
+import numpy
 import string
 import random
 import hashlib
@@ -136,8 +137,7 @@ class RasterProcessor:
         self.rasterhash = self.generate_md5(raster) #TODO generate unique from GDB
         self.discard_condition = discard_condition
         self.null_raster = None
-        self.zonal_stats_keys = None
-        self.zonal_stats_data = None
+        self.zonal_stats_data = []
 
     def process_raster(self):
         if self.precheck_db():
@@ -207,6 +207,7 @@ class RasterProcessor:
                   min REAL,
                   max REAL,
                   mean REAL,
+                  median REAL,
                   std REAL,
                   CONSTRAINT fk_raster
                     FOREIGN KEY (raster_id)
@@ -237,8 +238,8 @@ class RasterProcessor:
 
         with DBC(self.db) as dbc:
             insert_sql = """
-                INSERT into zonal_stats(raster_id, feature_id, count, min, max, mean, std)
-                VALUES (?,?,?,?,?,?,?)
+                INSERT into zonal_stats(raster_id, feature_id, count, min, max, mean, median, std)
+                VALUES (?,?,?,?,?,?,?,?)
             """
             process_list = [[rasterid] + list(row) for row in self.zonal_stats_data]
             dbc.executemany(insert_sql, (process_list))
@@ -355,34 +356,108 @@ class RasterProcessor:
         null_raster.save(null_raster_path)
         self.null_raster = null_raster_path
 
+    def generate_random_file(self, ext):
+        """
+
+        create a 10 digit random filename for a given ext with a
+        non numeric first
+
+        :param ext: Extension
+        :type ext: String
+        :return: A random filename
+        :rtype: String
+        """
+        # if begins with . discard
+        if ext[0] == ".":
+            ext = ext[1:]
+
+        random_letter = random.choice(string.ascii_lowercase)
+        random_uuid = str(uuid.uuid4().hex)[:9]
+        return "{}{}.{}".format(random_letter, random_uuid, ext)
+
     def get_zonal_stats_np_array(self, raster):
         """
         Create the raster stats data by a field in the polygon
-
-        :param raster: Raster location
-        :type raster: String
         """
 
-        # create a 10 digit random filename with a non numeric first
-        random_letter = random.choice(string.ascii_lowercase)
-        random_uuid = str(uuid.uuid4().hex)[:9]
-        temp_file = "{}{}.dbf".format(random_letter, random_uuid)
+        arcpyraster = arcpy.Raster(raster)
+        raster_desc = arcpy.Describe(arcpyraster)
 
-        temp_dbf = os.path.join(arcpy.env.workspace, temp_file)
-        # Run the zonal statistics to table
-        arcpy.gp.ZonalStatisticsAsTable_sa(self.poly, self.zonefield,
-                                           raster, temp_dbf,
-                                           "DATA", "ALL")
+        # necessary raster metadata
+        oid_fieldname = arcpy.Describe(self.poly).OIDFieldName
+        lowerLeft = arcpy.Point(arcpyraster.extent.XMin, raster_desc.extent.YMin)
+        cellSize = arcpyraster.meanCellWidth
+        raster_nodataval = raster_desc.noDataValue
 
-        zonal_stats_data = arcpy.da.TableToNumPyArray(
-            temp_dbf,[self.zonefield, "COUNT", "MIN", "MAX", "MEAN", "STD"])
-        zonal_stats_keys = ["zone", "count", "min", "max", "mean", "std"]
+        # environment settings (some of these may not apply, or cellsize overrides(
+        arcpy.env.outputCoordinateSystem = raster_desc.spatialReference
+        arcpy.env.snapRaster = arcpyraster
+        arcpy.env.extent = arcpyraster.extent
 
-        # remove intermediate data from filesystem
-        self.arcpy_rm_file(temp_dbf+'*', glob_opt=True)
+        # Process: Polygon to Raster
+        temp_raster = self.generate_random_file("tif")
+        arcpy.PolygonToRaster_conversion(self.poly,
+                                         oid_fieldname,
+                                         temp_raster,
+                                         "CELL_CENTER",
+                                         "NONE",
+                                         cellSize)
 
-        self.zonal_stats_keys = zonal_stats_keys
-        self.zonal_stats_data = zonal_stats_data
+        # Clip the raster a second time to verify that the extents match
+        # Some cases exist where the cellsize gives an extra data column
+        # This is a workaround
+        temp_raster2 = self.generate_random_file("tif")
+        extent_text = " ".join(str(arcpyraster.extent).split()[:4])
+        arcpy.Clip_management(temp_raster,
+                              extent_text,
+                              temp_raster2,
+                              arcpyraster,
+                              maintain_clipping_extent="NO_MAINTAIN_EXTENT")
+
+        #reset env
+        arcpy.env.outputCoordinateSystem = None
+        arcpy.env.snapRaster = None
+        arcpy.env.extent = None
+
+        # load the rasters via numpy
+        np_poly_raster = arcpy.RasterToNumPyArray(temp_raster2,lowerLeft, nodata_to_value=-1)
+        np_raster = arcpy.RasterToNumPyArray(arcpyraster,lowerLeft, nodata_to_value=raster_nodataval)
+
+        # cleanup temp filesystem rasters after conversion
+        self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster)+"*",glob_opt=True)
+        self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster2)+"*",glob_opt=True)
+
+        if np_raster.shape != np_poly_raster.shape:
+            print("ERROR: Rasters for stats calc have differing shape")
+
+        # get unique raster values, remove nodata value
+        poly_raster_vals = numpy.unique(np_poly_raster).tolist()
+        if -1 in poly_raster_vals: poly_raster_vals.remove(-1)
+
+        # join back the zone name string to the OID, keep as lookup
+        oid_zone_lookup = {}
+        with arcpy.da.SearchCursor(self.poly, [oid_fieldname, self.zonefield]) as cursor:
+            for row in cursor:
+                # if OID occurrs in raster from polygon, add to lookup table
+                if row[0] in poly_raster_vals:
+                    oid_zone_lookup[row[0]] = row[1]
+
+
+        # create statistics on the input raster by unique values
+        for oid in oid_zone_lookup.keys():
+            # filter by unique raster value (e.x. 2)
+            statsdata_wnodata = np_raster[(np_poly_raster == oid)]
+            # filter again and remove nodata values from the raster
+            statsdata = statsdata_wnodata[statsdata_wnodata != raster_nodataval]
+            if statsdata.size != 0:
+                self.zonal_stats_data.append([oid_zone_lookup[oid],
+                                              statsdata.size,
+                                              numpy.min(statsdata).item(),
+                                              numpy.max(statsdata).item(),
+                                              numpy.mean(statsdata).item(),
+                                              numpy.median(statsdata).item(),
+                                              numpy.std(statsdata).item()])
+
 
     def arcpy_rm_file(self, input_file, glob_opt=False):
         """
@@ -418,6 +493,6 @@ if __name__ == "__main__":
     arcpy.CheckOutExtension("Spatial")
 
     proc = RasterProcessor(SQLITEDB, USNGGRID, ZONEFIELD, RASTER, DISCARDCELLS)
-    #proc.clear_db()
-    proc.truncate_db()
+    proc.clear_db()
+    #proc.truncate_db()
     proc.process_raster()
