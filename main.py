@@ -22,11 +22,9 @@ ROOTDIR = r'G:\ssdworkspace\raster_to_usng_rollup\data'
 WORKSPACE = r'{}\scratch'.format(ROOTDIR)
 SQLITEDB = r'{}\db\rollupdata.sqlite'.format(ROOTDIR)
 USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
-#USNGGRID = r'{}\testdata\test.gdb\usng1'.format(ROOTDIR)
 ZONEFIELD = "USNG_1KM"
 RASTER = r'{}\testdata\Irma_DG_MO_FEMANHRAP_020618_161215.tif'.format(ROOTDIR)
-#RASTER = r'{}\testdata\test.gdb\irma1'.format(ROOTDIR)
-DISCARDCELLS = None
+OUTPUTGRID = r'{}\testdata\usng_output.shp'.format(ROOTDIR)
 
 
 class DBC:
@@ -130,11 +128,12 @@ class RasterProcessor:
     """
     Management of the zonal stats database
     """
-    def __init__(self, db, poly, zonefield, raster):
+    def __init__(self, db, inpoly, outpoly, zonefield, raster):
         self.db = db
-        self.poly = poly
-        self.polyname = os.path.basename(poly)
-        self.polyhash = self.generate_md5(poly)
+        self.poly = inpoly
+        self.polyname = os.path.basename(inpoly)
+        self.polyhash = self.generate_md5(inpoly)
+        self.outpoly = outpoly
         self.zonefield = zonefield
         self.raster = raster
         self.rastername = os.path.basename(raster)
@@ -151,6 +150,12 @@ class RasterProcessor:
 
         self.get_zonal_stats_np_array(self.raster)
         self.update_db()
+
+    def create_output(self):
+        self.create_output_file()
+
+        # TODO select all matched hashes
+        self.join_zonalstats_by_rasterid(1)
 
     def precheck_db(self):
         """
@@ -582,6 +587,60 @@ class RasterProcessor:
             dd = datetime.datetime.strptime(timestamp_text, '%m%d%Y_%H%M%S')
             return dd.strftime('%Y-%m-%d %H:%M:%S')
 
+    def create_output_file(self):
+        """
+        Crete the output shapefile to be joined with statistics
+        """
+        arcpy.CopyFeatures_management(self.poly, self.outpoly)
+        try:
+            arcpy.RemoveIndex_management(self.poly, ["id_idx"])
+        except:
+            pass
+        arcpy.AddIndex_management(self.outpoly, self.zonefield, "id_idx")
+
+    def join_zonalstats_by_rasterid(self, rasterid):
+
+        # keep running list of fields to be updated
+        update_fields = [self.zonefield]
+
+        # create necessary fields
+        arcpy.AddField_management(self.outpoly, "count_{}".format(rasterid), "LONG")
+        update_fields.append("count_{}".format(rasterid))
+        for fieldname in ["min","max","mean","median","std"]:
+            fieldname_wid = "{}_{}".format(fieldname, rasterid)
+            update_fields.append(fieldname_wid)
+            arcpy.AddField_management(self.outpoly, fieldname_wid, "FLOAT")
+
+        with DBC(self.db) as dbc:
+            select_sql = """
+                SELECT feature_id, count, min, max, mean, median, std
+                FROM zonal_stats z
+                WHERE z.raster_id = ?
+            """
+            results = dbc.execute(select_sql, (rasterid,), 'all')
+        results_dict = {r[0]: r[1:] for r in results}
+
+        def quote_str(instr):
+            return "'"+instr+"'"
+        arcpy_sql = '"{0}" IN ({1})'.format(self.zonefield,
+                                            ', '.join(map(quote_str, results_dict.keys())) or 'NULL')
+
+        # select all features with rasterstat data and update using dictionary
+        # FIELDS: id_field + new count, min, max, mean, median, std
+        with arcpy.da.UpdateCursor(self.outpoly, update_fields, arcpy_sql) as cursor:
+            for row in cursor:
+                feature_id = row[0] # id field
+                row[1] = results_dict[feature_id][0] # count
+                row[2] = results_dict[feature_id][1] # min
+                row[3] = results_dict[feature_id][2] # max
+                row[4] = results_dict[feature_id][3] # mean
+                row[5] = results_dict[feature_id][4] # median
+                row[6] = results_dict[feature_id][5] # std
+                cursor.updateRow(row)
+
+
+
+
 if __name__ == "__main__":
 
     # Config
@@ -591,7 +650,8 @@ if __name__ == "__main__":
     # Check out the ArcGIS Spatial Analyst extension license
     arcpy.CheckOutExtension("Spatial")
 
-    proc = RasterProcessor(SQLITEDB, USNGGRID, ZONEFIELD, RASTER)
-    proc.clear_db()
+    proc = RasterProcessor(SQLITEDB, USNGGRID, OUTPUTGRID, ZONEFIELD, RASTER)
+    #proc.clear_db()
     #proc.truncate_db()
-    proc.process_raster()
+    #proc.process_raster()
+    proc.create_output()
