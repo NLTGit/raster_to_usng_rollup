@@ -3,6 +3,7 @@
 
 
 ###TODO
-1. summarize and merge data to polygon
-2. export data
+1. attach all available rasterstats to table
+2. export raster extents w/ metadata
 3. create command line args & toolbox GUI
+(optional) test on different arcgis versions
