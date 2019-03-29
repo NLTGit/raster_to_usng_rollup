@@ -1,5 +1,6 @@
 .idea
 data/db/*
 data/testdata/*.gdb
+data/testdata/*output*
 venv/
 *.lock

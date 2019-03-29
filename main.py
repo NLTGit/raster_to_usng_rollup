@@ -12,7 +12,6 @@ import sqlite3
 import datetime
 from arcpy import env
 from arcpy.sa import SetNull
-
 from contextlib import closing
 
 
@@ -152,10 +151,13 @@ class RasterProcessor:
         self.update_db()
 
     def create_output(self):
-        self.create_output_file()
+        """
+        Create the output file and append all relevant data
+        """
 
-        # TODO select all matched hashes
-        self.join_zonalstats_by_rasterid(1)
+        self.create_output_file()
+        for rasterid in self.get_current_poly_rasterids():
+            self.join_zonalstats_by_rasterid(rasterid)
 
     def precheck_db(self):
         """
@@ -299,6 +301,17 @@ class RasterProcessor:
                 VALUES (?,?)
                 """
             dbc.execute(insert_sql, (rasterid, polygon.WKT))
+
+    def get_current_poly_rasterids(self):
+        with DBC(self.db) as dbc:
+            select_sql = """
+                SELECT raster_id
+                FROM poly p
+                WHERE p.name = ? AND
+                      p.hash = ?
+            """
+            results = dbc.execute(select_sql, (self.polyname, self.polyhash), 'all')
+            return [r[0] for r in results]
 
     def truncate_db(self):
         with DBC(self.db) as dbc:
