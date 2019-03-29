@@ -7,4 +7,4 @@
 2. export raster extents w/ metadata
 3. create command line args & toolbox GUI
 4. report status and progress to user
-(optional) test on different arcgis versions
+5. (optional) test on different arcgis versions
