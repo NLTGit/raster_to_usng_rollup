@@ -62,7 +62,7 @@ class DBC:
             db_dir = os.path.dirname(self.db)
             if not os.path.exists(db_dir):
                 os.makedirs(db_dir)
-            arcpy.gp.CreateSQLiteDB(self.db, 'SPATIALITE')
+            arcpy.gp.CreateSQLiteDB(self.db)
 
     def connect(self):
         """
@@ -71,6 +71,7 @@ class DBC:
         try:
             self.conn = sqlite3.connect(self.db)
             self.conn.execute("PRAGMA foreign_keys = 1")
+
         except sqlite3.Error as e:
             print(e)
             self.conn = None
@@ -131,11 +132,11 @@ class RasterProcessor:
         self.db = db
         self.poly = poly
         self.polyname = os.path.basename(poly)
-        self.polyhash = self.generate_md5(poly) #TODO generate unique from GDB
+        self.polyhash = self.generate_md5(poly)
         self.zonefield = zonefield
         self.raster = raster
         self.rastername = os.path.basename(raster)
-        self.rasterhash = self.generate_md5(raster) #TODO generate unique from GDB
+        self.rasterhash = self.generate_md5(raster)
         self.null_raster = None
         self.zonal_stats_data = []
 
@@ -162,7 +163,7 @@ class RasterProcessor:
         rasterid = self.load_raster_table()
         self.load_poly_table(rasterid)
         self.load_zonal_table(rasterid)
-        #self.load_footprint_table(rasterid)
+        self.load_footprint_table(rasterid)
 
     def create_sqlite_schema(self):
         """
@@ -188,7 +189,7 @@ class RasterProcessor:
 
             dbc.execute("""CREATE TABLE IF NOT EXISTS raster_footprint (
                   raster_id INTEGER NOT NULL,
-                  the_geom POLYGON,
+                  the_geom TEXT,
                   CONSTRAINT fk_raster
                     FOREIGN KEY (raster_id)
                     REFERENCES raster(id)
@@ -251,6 +252,32 @@ class RasterProcessor:
             rasterid = dbc.execute(select_sql, (rowid), 'one')
 
             return rasterid[0]
+
+    def load_footprint_table(self, rasterid):
+
+        # get the raster extent and spatial reference
+        arcpy_extent = str(arcpy.Raster(self.raster).extent)
+        arcpy_in_sref = arcpy.Describe(self.raster).spatialReference
+        XMin, YMin, XMax, YMax = arcpy_extent.split()[:4]
+
+        # Use the extent to create a polygon, project to wgs84
+        point_array = arcpy.Array([
+                             arcpy.Point(XMin, YMin),
+                             arcpy.Point(XMin, YMax),
+                             arcpy.Point(XMax, YMax),
+                             arcpy.Point(XMax, YMin),
+                             arcpy.Point(XMin, YMin)
+                             ])
+        arcpy_out_sref = arcpy.SpatialReference('Geographic Coordinate Systems/World/WGS 1984')
+        polygon = arcpy.Polygon(point_array, arcpy_in_sref).projectAs(arcpy_out_sref)
+
+        # update database
+        with DBC(self.db) as dbc:
+            insert_sql = """
+                INSERT INTO raster_footprint(raster_id, the_geom) 
+                VALUES (?,?)
+                """
+            dbc.execute(insert_sql, (rasterid, polygon.WKT))
 
     def truncate_db(self):
         with DBC(self.db) as dbc:
@@ -524,6 +551,6 @@ if __name__ == "__main__":
     arcpy.CheckOutExtension("Spatial")
 
     proc = RasterProcessor(SQLITEDB, USNGGRID, ZONEFIELD, RASTER)
-    #proc.clear_db()
+    proc.clear_db()
     #proc.truncate_db()
-    #proc.process_raster()
+    proc.process_raster()
