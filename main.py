@@ -238,6 +238,20 @@ class RasterProcessor:
             process_list = [[rasterid] + list(row) for row in self.zonal_stats_data]
             dbc.executemany(insert_sql, (process_list))
 
+    def load_raster_table(self):
+        with DBC(self.db) as dbc:
+            insert_sql = """
+                INSERT INTO raster(name, hash) 
+                VALUES (?,?)
+                """
+            rowid = dbc.execute(insert_sql, (self.rastername, self.rasterhash), 'rowid')
+            select_sql = """
+                SELECT id FROM raster WHERE rowid = ?
+                """
+            rasterid = dbc.execute(select_sql, (rowid), 'one')
+
+            return rasterid[0]
+
     def truncate_db(self):
         with DBC(self.db) as dbc:
             delete_sql = """
@@ -286,20 +300,6 @@ class RasterProcessor:
                 return True
             else:
                 return False
-
-    def load_raster_table(self):
-        with DBC(self.db) as dbc:
-            insert_sql = """
-                INSERT INTO raster(name, hash) 
-                VALUES (?,?)
-                """
-            rowid = dbc.execute(insert_sql, (self.rastername, self.rasterhash), 'rowid')
-            select_sql = """
-                SELECT id FROM raster WHERE rowid = ?
-                """
-            rasterid = dbc.execute(select_sql, (rowid), 'one')
-
-            return rasterid[0]
 
     def generate_md5(self, file_name):
         """
@@ -371,8 +371,8 @@ class RasterProcessor:
         """
         # Discard all raster cells where the value is <= 0
         raster_desc = arcpy.Describe(self.raster)
-        no_data_val = raster_desc.noDataValue
-        null_raster = SetNull(self.raster, self.raster, self.discard_condition)
+        discard_condition = "VALUE < 0"
+        null_raster = SetNull(self.raster, self.raster, discard_condition)
 
         # Save the output
         raster_path, raster_file = os.path.split(RASTER)
