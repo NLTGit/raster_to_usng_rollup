@@ -22,7 +22,6 @@ SQLITEDB = r'{}\db\rollupdata.sqlite'.format(ROOTDIR)
 USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
 ZONEFIELD = "USNG_1KM"
 RASTER = r'{}\testdata\Irma_DG_OB_FEMA.tif'.format(ROOTDIR)
-#DISCARDCELLS = "Value <= 0"
 DISCARDCELLS = None
 
 
@@ -126,7 +125,7 @@ class RasterProcessor:
     """
     Management of the zonal stats database
     """
-    def __init__(self, db, poly, zonefield, raster, discard_condition = None):
+    def __init__(self, db, poly, zonefield, raster):
         self.db = db
         self.poly = poly
         self.polyname = os.path.basename(poly)
@@ -135,7 +134,6 @@ class RasterProcessor:
         self.raster = raster
         self.rastername = os.path.basename(raster)
         self.rasterhash = self.generate_md5(raster) #TODO generate unique from GDB
-        self.discard_condition = discard_condition
         self.null_raster = None
         self.zonal_stats_data = []
 
@@ -145,12 +143,7 @@ class RasterProcessor:
             print("Discontinuing processing")
             return
 
-        if self.discard_condition:
-            self.process_null_raster()
-            self.get_zonal_stats_np_array(self.null_raster)
-        else:
-            self.get_zonal_stats_np_array(self.raster)
-
+        self.get_zonal_stats_np_array(self.raster)
         self.update_db()
 
     def precheck_db(self):
@@ -179,8 +172,7 @@ class RasterProcessor:
                 CREATE TABLE IF NOT EXISTS raster (
                   id INTEGER PRIMARY KEY,
                   name TEXT NOT NULL,
-                  hash TEXT NOT NULL,
-                  discard_condition TEXT);""")
+                  hash TEXT NOT NULL);""")
 
             dbc.execute("""CREATE TABLE IF NOT EXISTS poly (
                   raster_id INTERGER NOT NULL,
@@ -273,10 +265,9 @@ class RasterProcessor:
         :rtype: Bool
         """
         with DBC(self.db) as dbc:
-
             # check whether the hash values and column zone key exist in the DB
             select_sql = """
-                SELECT r.discard_condition
+                SELECT 1
                 FROM raster r
                 LEFT JOIN poly p 
                 ON r.id = p.raster_id
@@ -288,24 +279,19 @@ class RasterProcessor:
                                  (self.rasterhash,
                                   self.polyhash,
                                   self.zonefield),
-                                  'all')
-
-            # check if the discard conditions has been used before on these data
+                                  'one')
             if results:
-                for result in results:
-                    if result[0] == self.discard_condition:
-                        return True
-                return False
+                return True
             else:
                 return False
 
     def load_raster_table(self):
         with DBC(self.db) as dbc:
             insert_sql = """
-                INSERT INTO raster(name, hash, discard_condition) 
-                VALUES (?,?,?)
+                INSERT INTO raster(name, hash) 
+                VALUES (?,?)
                 """
-            rowid = dbc.execute(insert_sql, (self.rastername, self.rasterhash, self.discard_condition), 'rowid')
+            rowid = dbc.execute(insert_sql, (self.rastername, self.rasterhash), 'rowid')
             select_sql = """
                 SELECT id FROM raster WHERE rowid = ?
                 """
@@ -377,9 +363,11 @@ class RasterProcessor:
 
     def get_zonal_stats_np_array(self, raster):
         """
-        Create the raster stats data by a field in the polygon
-        """
+        Generate the zonal stats of an input raster file
 
+        :param raster: The location of a raster on disk
+        :type raster: String
+        """
         arcpyraster = arcpy.Raster(raster)
         raster_desc = arcpy.Describe(arcpyraster)
 
@@ -458,7 +446,6 @@ class RasterProcessor:
                                               numpy.median(statsdata).item(),
                                               numpy.std(statsdata).item()])
 
-
     def arcpy_rm_file(self, input_file, glob_opt=False):
         """
         Removes a file or glob pattern using the arcgis engine.
@@ -492,7 +479,7 @@ if __name__ == "__main__":
     # Check out the ArcGIS Spatial Analyst extension license
     arcpy.CheckOutExtension("Spatial")
 
-    proc = RasterProcessor(SQLITEDB, USNGGRID, ZONEFIELD, RASTER, DISCARDCELLS)
-    proc.clear_db()
+    proc = RasterProcessor(SQLITEDB, USNGGRID, ZONEFIELD, RASTER)
+    #proc.clear_db()
     #proc.truncate_db()
     proc.process_raster()
