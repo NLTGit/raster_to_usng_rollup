@@ -557,8 +557,12 @@ class RasterProcessor:
             pass
 
     def timestamp_from_rastername(self):
-        # Irma_DG_MO_FEMANHRAP_020618_161215.tif
-        #self.rastername
+        """
+        Generate a timestamp in expected format based on input filename
+
+        :return: Timestamp
+        :rtype: String
+        """
 
         pattern_2digityear = "[0-9]{6}_[0-9]{6}" # 020618_161215
         pattern_4digityear = "[0-9]{8}_[0-9]{6}" # 02062018_161215
