@@ -20,8 +20,10 @@ ROOTDIR = r'G:\ssdworkspace\raster_to_usng_rollup\data'
 WORKSPACE = r'{}\scratch'.format(ROOTDIR)
 SQLITEDB = r'{}\db\rollupdata.sqlite'.format(ROOTDIR)
 USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
+#USNGGRID = r'{}\testdata\test.gdb\usng1'.format(ROOTDIR)
 ZONEFIELD = "USNG_1KM"
 RASTER = r'{}\testdata\Irma_DG_OB_FEMA.tif'.format(ROOTDIR)
+#RASTER = r'{}\testdata\test.gdb\irma1'.format(ROOTDIR)
 DISCARDCELLS = None
 
 
@@ -309,9 +311,51 @@ class RasterProcessor:
         :rtype: String
         """
         hash_md5 = hashlib.md5()
-        with open(file_name, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
+
+        # if in a gdb, handle the cases
+        if ".gdb" in file_name:
+            desc=arcpy.Describe(file_name)
+
+            # raster gdb, hash the file size and band standard dev
+            if desc.dataType == "RasterDataset":
+                rast=arcpy.Raster(file_name)
+                stdev = arcpy.GetRasterProperties_management(rast, "STD")
+                hash_md5.update(str(rast.uncompressedSize)+str(stdev))
+
+            # shp gdb, hash the extent and feature count
+            if desc.dataType == "FeatureClass":
+                fcount = arcpy.GetCount_management(file_name).getOutput(0)
+                desc = arcpy.Describe(file_name)
+                hash_md5.update(str(fcount)+str(desc.extent))
+
+            else:
+                print("ERROR: Unrecognized gdb input type {}, not feature or raster".format(desc.dataType))
+                print("File: {}".format(file_name))
+
+        # if the file is a shapefile on the fs, hash the shp and dbf, combine
+        elif file_name[-4:] == '.shp' and os.path.exists(file_name[:-4] + ".dbf"):
+            # hash the shp
+            hash_shp = hashlib.md5()
+            with open(file_name, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_shp.update(chunk)
+
+            # hash the dbf
+            hash_dbf = hashlib.md5()
+            dbf_name = file_name[:-4] + ".dbf"
+            with open(dbf_name, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_dbf.update(chunk)
+
+            # hash both files together
+            hash_md5.update(hash_shp.hexdigest() + hash_shp.hexdigest())
+
+        # else if the file is on the fs, hash it
+        else:
+            with open(file_name, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_md5.update(chunk)
+
         return hash_md5.hexdigest()
 
     def process_null_raster(self):
@@ -482,4 +526,4 @@ if __name__ == "__main__":
     proc = RasterProcessor(SQLITEDB, USNGGRID, ZONEFIELD, RASTER)
     #proc.clear_db()
     #proc.truncate_db()
-    proc.process_raster()
+    #proc.process_raster()
