@@ -1,5 +1,6 @@
 from __future__ import with_statement
 import os
+import re
 import arcpy
 import glob
 import uuid
@@ -8,6 +9,7 @@ import string
 import random
 import hashlib
 import sqlite3
+import datetime
 from arcpy import env
 from arcpy.sa import SetNull
 
@@ -22,7 +24,7 @@ SQLITEDB = r'{}\db\rollupdata.sqlite'.format(ROOTDIR)
 USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
 #USNGGRID = r'{}\testdata\test.gdb\usng1'.format(ROOTDIR)
 ZONEFIELD = "USNG_1KM"
-RASTER = r'{}\testdata\Irma_DG_OB_FEMA.tif'.format(ROOTDIR)
+RASTER = r'{}\testdata\Irma_DG_MO_FEMANHRAP_020618_161215.tif'.format(ROOTDIR)
 #RASTER = r'{}\testdata\test.gdb\irma1'.format(ROOTDIR)
 DISCARDCELLS = None
 
@@ -139,6 +141,7 @@ class RasterProcessor:
         self.rasterhash = self.generate_md5(raster)
         self.null_raster = None
         self.zonal_stats_data = []
+        self.timestamp = self.timestamp_from_rastername()
 
     def process_raster(self):
         if self.precheck_db():
@@ -175,7 +178,8 @@ class RasterProcessor:
                 CREATE TABLE IF NOT EXISTS raster (
                   id INTEGER PRIMARY KEY,
                   name TEXT NOT NULL,
-                  hash TEXT NOT NULL);""")
+                  hash TEXT NOT NULL,
+                  referencedate TEXT);""")
 
             dbc.execute("""CREATE TABLE IF NOT EXISTS poly (
                   raster_id INTERGER NOT NULL,
@@ -240,12 +244,18 @@ class RasterProcessor:
             dbc.executemany(insert_sql, (process_list))
 
     def load_raster_table(self):
+        """
+        Load the raster name and hash into the db, give the sqlite rowid
+
+        :return: rasterid
+        :rtype: Integer
+        """
         with DBC(self.db) as dbc:
             insert_sql = """
-                INSERT INTO raster(name, hash) 
-                VALUES (?,?)
+                INSERT INTO raster(name, hash, referencedate) 
+                VALUES (?,?,?)
                 """
-            rowid = dbc.execute(insert_sql, (self.rastername, self.rasterhash), 'rowid')
+            rowid = dbc.execute(insert_sql, (self.rastername, self.rasterhash, self.timestamp), 'rowid')
             select_sql = """
                 SELECT id FROM raster WHERE rowid = ?
                 """
@@ -254,6 +264,12 @@ class RasterProcessor:
             return rasterid[0]
 
     def load_footprint_table(self, rasterid):
+        """
+        Create and load raster WKT extents into the db by unique id
+
+        :param rasterid: Unique raster id
+        :type rasterid: Integer
+        """
 
         # get the raster extent and spatial reference
         arcpy_extent = str(arcpy.Raster(self.raster).extent)
@@ -540,6 +556,27 @@ class RasterProcessor:
         except OSError:
             pass
 
+    def timestamp_from_rastername(self):
+        # Irma_DG_MO_FEMANHRAP_020618_161215.tif
+        #self.rastername
+
+        pattern_2digityear = "[0-9]{6}_[0-9]{6}" # 020618_161215
+        pattern_4digityear = "[0-9]{8}_[0-9]{6}" # 02062018_161215
+
+        result = re.search(pattern_2digityear, self.rastername)
+        if not result:
+            result = re.search(pattern_4digityear, self.rastername)
+        if not result:
+            return None
+
+        timestamp_text = result.group()
+        ymd, hms = timestamp_text.split("_")
+        if len(ymd) == 6:
+            dd = datetime.datetime.strptime(timestamp_text, '%m%d%y_%H%M%S')
+            return dd.strftime('%Y-%m-%d %H:%M:%S')
+        elif len(ymd) == 8:
+            dd = datetime.datetime.strptime(timestamp_text, '%m%d%Y_%H%M%S')
+            return dd.strftime('%Y-%m-%d %H:%M:%S')
 
 if __name__ == "__main__":
 
