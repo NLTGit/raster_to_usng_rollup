@@ -24,6 +24,8 @@ USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
 ZONEFIELD = "USNG_1KM"
 RASTER = r'{}\testdata\Irma_DG_MO_FEMANHRAP_020618_161215.tif'.format(ROOTDIR)
 OUTPUTGRID = r'{}\testdata\usng_output.shp'.format(ROOTDIR)
+STARTTIMESTAMP = '020618_000000'
+ENDTIMESTAMP = '020618_235959'
 
 
 class DBC:
@@ -127,7 +129,7 @@ class RasterProcessor:
     """
     Management of the zonal stats database
     """
-    def __init__(self, db, inpoly, outpoly, zonefield, raster):
+    def __init__(self, db, inpoly, outpoly, zonefield, raster, start_timestamp=None, end_timestamp=None):
         self.db = db
         self.poly = inpoly
         self.polyname = os.path.basename(inpoly)
@@ -139,7 +141,9 @@ class RasterProcessor:
         self.rasterhash = self.generate_md5(raster)
         self.null_raster = None
         self.zonal_stats_data = []
-        self.timestamp = self.timestamp_from_rastername()
+        self.timestamp = self.timestamp_from_text(self.rastername)
+        self.start_timestamp = self.validate_timestamp(start_timestamp)
+        self.end_timestamp = self.validate_timestamp(end_timestamp)
 
     def process_raster(self):
         if self.precheck_db():
@@ -574,7 +578,41 @@ class RasterProcessor:
         except OSError:
             pass
 
-    def timestamp_from_rastername(self):
+    def validate_timestamp(self, timestamp):
+        """
+        Validate that a timestamp is y-m-d h:m:s or that it follows the expected
+        input datestamp similar to what's seen on the raster file names
+
+        Input can be: y-m-d h:m:s, mmddyy_hhmmss, or mmddyyyy_hhmmss
+
+        :param timestamp: An input timestamp
+        :type timestamp: String
+        :return: Formatted timestamp or None
+        :rtype: String
+        """
+
+        # shortcut no input on the timestamp (default handling for class)
+        if not timestamp:
+            return None
+
+        # check if input timestamp follows raster name format
+        pattern_2digityear = "[0-9]{6}_[0-9]{6}" # 020618_161215
+        pattern_4digityear = "[0-9]{8}_[0-9]{6}" # 02062018_161215
+        if not re.search(pattern_2digityear, timestamp) \
+                and not re.search(pattern_4digityear, timestamp):
+
+            # check if input timestamp is y-m-d h:m:s
+            try:
+                datetime.datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+                return timestamp
+            except ValueError:
+                print("Incorrect date format should be y-m-d h:m:s, mmddyy_hhmmss, or mmddyyyy_hhmmss")
+                return None
+        else:
+            # convert to y-m-d h:m:s
+            return self.timestamp_from_text(timestamp)
+
+    def timestamp_from_text(self, intext=None):
         """
         Generate a timestamp in expected format based on input filename
 
@@ -585,9 +623,9 @@ class RasterProcessor:
         pattern_2digityear = "[0-9]{6}_[0-9]{6}" # 020618_161215
         pattern_4digityear = "[0-9]{8}_[0-9]{6}" # 02062018_161215
 
-        result = re.search(pattern_2digityear, self.rastername)
+        result = re.search(pattern_2digityear, intext)
         if not result:
-            result = re.search(pattern_4digityear, self.rastername)
+            result = re.search(pattern_4digityear, intext)
         if not result:
             return None
 
@@ -663,8 +701,8 @@ if __name__ == "__main__":
     # Check out the ArcGIS Spatial Analyst extension license
     arcpy.CheckOutExtension("Spatial")
 
-    proc = RasterProcessor(SQLITEDB, USNGGRID, OUTPUTGRID, ZONEFIELD, RASTER)
+    proc = RasterProcessor(SQLITEDB, USNGGRID, OUTPUTGRID, ZONEFIELD, RASTER, STARTTIMESTAMP, ENDTIMESTAMP)
     #proc.clear_db()
     #proc.truncate_db()
     #proc.process_raster()
-    proc.create_output()
+    #proc.create_output()
