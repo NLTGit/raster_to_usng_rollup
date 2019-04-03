@@ -161,7 +161,6 @@ class RasterProcessor:
 
         self.create_output_file()
         for rasterid in self.get_current_poly_rasterids():
-            print(rasterid)
             self.join_zonalstats_by_rasterid(rasterid)
 
     def precheck_db(self):
@@ -309,23 +308,41 @@ class RasterProcessor:
 
     def get_current_poly_rasterids(self):
         """
-        Get the raster ids that are linked with this specific polygon. Order results by date timestamp, earliest first.
+        Get the raster ids that are linked with this specific polygon. Order results by date timestamp, earliest first. Filter the results by the start and end dates if exists.
 
         :return: Raster ids in ascending order by timestamp
         :rtype: List
         """
         with DBC(self.db) as dbc:
-            select_sql = """
-              SELECT id
-              FROM raster r
-              WHERE r.id IN (
-                SELECT raster_id
-                FROM poly p
-                WHERE p.name = ? AND
-                      p.hash = ? )
-              ORDER BY r.referencedate ASC;
-            """
-            results = dbc.execute(select_sql, (self.polyname, self.polyhash), 'all')
+            # if the timestamp filters are active, filter the data appearing in the output file
+            if self.start_timestamp and self.end_timestamp:
+                select_sql = """
+                  SELECT id
+                  FROM raster r
+                  WHERE r.id IN (
+                    SELECT raster_id
+                    FROM poly p
+                    WHERE p.name = ? AND
+                          p.hash = ? )
+                    AND r.referencedate BETWEEN ? AND ?
+                  ORDER BY r.referencedate ASC;
+                """
+                results = dbc.execute(select_sql, (self.polyname, self.polyhash, self.start_timestamp, self.end_timestamp), 'all')
+
+            # otherwise use all data paired with the polygon, ignoring time
+            else:
+                select_sql = """
+                  SELECT id
+                  FROM raster r
+                  WHERE r.id IN (
+                    SELECT raster_id
+                    FROM poly p
+                    WHERE p.name = ? AND
+                          p.hash = ? )
+                  ORDER BY r.referencedate ASC;
+                """
+                results = dbc.execute(select_sql, (self.polyname, self.polyhash), 'all')
+
             return [r[0] for r in results]
 
     def truncate_db(self):
