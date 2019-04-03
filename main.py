@@ -24,8 +24,11 @@ USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
 ZONEFIELD = "USNG_1KM"
 RASTER = r'{}\testdata\Irma_DG_MO_FEMANHRAP_020618_161215.tif'.format(ROOTDIR)
 OUTPUTGRID = r'{}\testdata\usng_output.shp'.format(ROOTDIR)
-STARTTIMESTAMP = '020618_000000'
-ENDTIMESTAMP = '020618_235959'
+# user input timestamps can be mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss
+#STARTTIMESTAMP = '020618_000000'
+STARTTIMESTAMP = '2018-02-06 00:00:00'
+#ENDTIMESTAMP = '020618_235959'
+ENDTIMESTAMP = '2018-02-06 23:59:59'
 
 
 class DBC:
