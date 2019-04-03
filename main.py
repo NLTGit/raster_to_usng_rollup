@@ -161,6 +161,7 @@ class RasterProcessor:
 
         self.create_output_file()
         for rasterid in self.get_current_poly_rasterids():
+            print(rasterid)
             self.join_zonalstats_by_rasterid(rasterid)
 
     def precheck_db(self):
@@ -307,12 +308,22 @@ class RasterProcessor:
             dbc.execute(insert_sql, (rasterid, polygon.WKT))
 
     def get_current_poly_rasterids(self):
+        """
+        Get the raster ids that are linked with this specific polygon. Order results by date timestamp, earliest first.
+
+        :return: Raster ids in ascending order by timestamp
+        :rtype: List
+        """
         with DBC(self.db) as dbc:
             select_sql = """
+              SELECT id
+              FROM raster r
+              WHERE r.id IN (
                 SELECT raster_id
                 FROM poly p
                 WHERE p.name = ? AND
-                      p.hash = ?
+                      p.hash = ? )
+              ORDER BY r.referencedate ASC;
             """
             results = dbc.execute(select_sql, (self.polyname, self.polyhash), 'all')
             return [r[0] for r in results]
@@ -705,4 +716,4 @@ if __name__ == "__main__":
     #proc.clear_db()
     #proc.truncate_db()
     #proc.process_raster()
-    #proc.create_output()
+    proc.create_output()
