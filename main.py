@@ -11,7 +11,6 @@ import hashlib
 import sqlite3
 import datetime
 from arcpy import env
-from arcpy.sa import SetNull
 from contextlib import closing
 
 
@@ -458,34 +457,6 @@ class RasterProcessor:
 
         return hash_md5.hexdigest()
 
-    def process_null_raster(self):
-        """
-        Remove cells from a raster by expression. 'Value < 0' for example
-
-        :param input_raster_path: Path of the raster to be processed
-        :type input_raster_path: String
-        :param discard_expression: Expression of values to be removed
-        :type discard_expression: String
-        :return: Path to location of corrected raster
-        :rtype: String
-        """
-        # Discard all raster cells where the value is <= 0
-        raster_desc = arcpy.Describe(self.raster)
-        discard_condition = "VALUE < 0"
-        null_raster = SetNull(self.raster, self.raster, discard_condition)
-
-        # Save the output
-        raster_path, raster_file = os.path.split(RASTER)
-        raster_name, raster_ext = os.path.splitext(raster_file)
-        if raster_ext:
-            null_raster_name = "{}_null{}".format(raster_name, raster_ext)
-        else:
-            null_raster_name = "{}_null".format(raster_name)
-
-        null_raster_path = os.path.join(raster_path, null_raster_name)
-        null_raster.save(null_raster_path)
-        self.null_raster = null_raster_path
-
     def generate_random_file(self, ext):
         """
 
@@ -769,9 +740,6 @@ if __name__ == "__main__":
     # Config
     env.overwriteOutput = 1
     env.workspace = WORKSPACE
-
-    # Check out the ArcGIS Spatial Analyst extension license
-    arcpy.CheckOutExtension("Spatial")
 
     proc = RasterProcessor(SQLITEDB,
                            USNGGRID,
