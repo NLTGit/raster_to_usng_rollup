@@ -24,6 +24,7 @@ USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
 ZONEFIELD = "USNG_1KM"
 RASTER = r'{}\testdata\Irma_DG_MO_FEMANHRAP_020618_161215.tif'.format(ROOTDIR)
 OUTPUTGRID = r'{}\testdata\usng_output.shp'.format(ROOTDIR)
+OUTPUTFOOTPRINTS = r'{}\testdata\footprints.shp'.format(ROOTDIR)
 # user input timestamps can be mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss
 #STARTTIMESTAMP = '020618_000000'
 STARTTIMESTAMP = '2018-02-06 00:00:00'
@@ -132,7 +133,7 @@ class RasterProcessor:
     """
     Management of the zonal stats database
     """
-    def __init__(self, db, inpoly, outpoly, zonefield, raster, start_timestamp=None, end_timestamp=None):
+    def __init__(self, db, inpoly, outpoly, outfootprints, zonefield, raster, start_timestamp=None, end_timestamp=None):
         self.db = db
         self.poly = inpoly
         self.polyname = os.path.basename(inpoly)
@@ -147,6 +148,7 @@ class RasterProcessor:
         self.timestamp = self.timestamp_from_text(self.rastername)
         self.start_timestamp = self.validate_timestamp(start_timestamp)
         self.end_timestamp = self.validate_timestamp(end_timestamp)
+        self.outfootprints = outfootprints
 
     def process_raster(self):
         if self.precheck_db():
@@ -163,8 +165,10 @@ class RasterProcessor:
         """
 
         self.create_output_file()
+        self.create_output_footprints()
         for rasterid in self.get_current_poly_rasterids():
             self.join_zonalstats_by_rasterid(rasterid)
+            self.join_footprints_by_rasterid(rasterid)
 
     def precheck_db(self):
         """
@@ -680,7 +684,27 @@ class RasterProcessor:
             pass
         arcpy.AddIndex_management(self.outpoly, self.zonefield, "id_idx")
 
+    def create_output_footprints(self):
+        """
+        Create the footprints output table showing the raster coverage and collection dates
+        """
+
+        out_path = os.path.dirname(self.outfootprints)
+        out_name = os.path.basename(self.outfootprints)
+        out_sref = arcpy.SpatialReference('Geographic Coordinate Systems/World/WGS 1984')
+        arcpy.CreateFeatureclass_management(out_path, out_name, 'POLYGON', spatial_reference=out_sref)
+        arcpy.AddField_management(self.outfootprints, "name", "TEXT", 255)
+        arcpy.AddField_management(self.outfootprints, "date", "DATE")
+        arcpy.DeleteField_management (self.outfootprints, "id")
+
     def join_zonalstats_by_rasterid(self, rasterid):
+        """
+        Joins the zonal stats data to a copy of the input polygon.
+        Attribute table is wide so columns are added as needed
+
+        :param rasterid: The rasterid of a dataset to be added
+        :type rasterid: Integer
+        """
 
         # keep running list of fields to be updated
         update_fields = [self.zonefield]
@@ -720,7 +744,24 @@ class RasterProcessor:
                 row[6] = results_dict[feature_id][5] # std
                 cursor.updateRow(row)
 
+    def join_footprints_by_rasterid(self, rasterid):
+        """
+        Join the polygon, name, and date fields to the output raster polygon shapefile by rasterid
 
+        :param rasterid: the rasterid of a dataset to be appended
+        :type rasterid: Integer
+        """
+
+        with DBC(self.db) as dbc:
+            select_sql = """
+                SELECT r.the_geom, l.name, l.referencedate
+                FROM raster l
+                LEFT JOIN raster_footprint r on l.id = r.raster_id
+                WHERE l.id = ?
+            """
+            results = dbc.execute(select_sql, (rasterid,), 'one')
+            with arcpy.da.InsertCursor(self.outfootprints, ['SHAPE@WKT', 'name', 'date']) as cursor:
+                cursor.insertRow(results)
 
 
 if __name__ == "__main__":
@@ -732,7 +773,14 @@ if __name__ == "__main__":
     # Check out the ArcGIS Spatial Analyst extension license
     arcpy.CheckOutExtension("Spatial")
 
-    proc = RasterProcessor(SQLITEDB, USNGGRID, OUTPUTGRID, ZONEFIELD, RASTER, STARTTIMESTAMP, ENDTIMESTAMP)
+    proc = RasterProcessor(SQLITEDB,
+                           USNGGRID,
+                           OUTPUTGRID,
+                           OUTPUTFOOTPRINTS,
+                           ZONEFIELD,
+                           RASTER,
+                           STARTTIMESTAMP,
+                           ENDTIMESTAMP)
     #proc.clear_db()
     #proc.truncate_db()
     #proc.process_raster()

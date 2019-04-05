@@ -3,7 +3,6 @@
 
 
 ###TODO
-1. export raster extents w/ metadata
-2. create command line args & toolbox GUI
-3. report status and progress to user
-4. (optional) test on different arcgis versions
+1. create toolbox GUI
+2. report status and progress to user
+3. (optional) test on different arcgis versions
