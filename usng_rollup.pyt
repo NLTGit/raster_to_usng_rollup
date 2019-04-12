@@ -827,14 +827,14 @@ class USNGRollup(object):
             multiValue=True)
 
         param5 = arcpy.Parameter(
-            displayName="Start timestamp filter (optional) - mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss",
+            displayName="Start timestamp filter - mmddyy_hhmmss, mmddyyyy_hhmmss, yyyy-mm-dd hh:mm:ss",
             name="STARTTIMESTAMP",
             datatype="GPString",
             parameterType="Optional",
             direction="Input")
 
         param6 = arcpy.Parameter(
-            displayName="End timestamp filter (optional) - mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss",
+            displayName="End timestamp filter - mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss",
             name="ENDTIMESTAMP",
             datatype="GPString",
             parameterType="Optional",
