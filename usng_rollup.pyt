@@ -463,16 +463,16 @@ class RasterProcessor:
         :return: A random filename
         :rtype: String
         """
-        self.messages.addMessage("generating random file with extension {}".format(ext))
-        # if begins with . discard
-        if ext[0] == ".":
-            ext = ext[1:]
+        self.messages.addMessage("generating random file with extension: {}".format(ext))
 
         random_letter = random.choice(string.ascii_lowercase)
         random_uuid = str(uuid.uuid4().hex)[:9]
         if ext == "":
             return "{}{}".format(random_letter, random_uuid)
         else:
+            # if begins with . discard
+            if ext[0] == ".":
+                ext = ext[1:]
             return "{}{}.{}".format(random_letter, random_uuid, ext)
 
     def get_zonal_stats_np_array(self, raster):
@@ -498,10 +498,12 @@ class RasterProcessor:
         arcpy.env.extent = arcpyraster.extent
 
         # If workspace is a folder, make a tif, else put in gdb
-        if arcpy.env.workspace[-4:].lower == '.gdb':
+        if arcpy.env.workspace[-4:].lower() == '.gdb':
             temp_raster = self.generate_random_file("")
+            temp_raster2 = self.generate_random_file("")
         else:
             temp_raster = self.generate_random_file("tif")
+            temp_raster2 = self.generate_random_file("tif")
 
         # Process polygon to raster
         arcpy.PolygonToRaster_conversion(self.poly,
@@ -514,7 +516,6 @@ class RasterProcessor:
         # Clip the raster a second time to verify that the extents match
         # Some cases exist where the cellsize gives an extra data column
         # This is a workaround
-        temp_raster2 = self.generate_random_file("tif")
         extent_text = " ".join(str(arcpyraster.extent).split()[:4])
         arcpy.Clip_management(temp_raster,
                               extent_text,
@@ -532,8 +533,12 @@ class RasterProcessor:
         np_raster = arcpy.RasterToNumPyArray(arcpyraster,lowerLeft, nodata_to_value=raster_nodataval)
 
         # cleanup temp filesystem rasters after conversion
-        self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster)+"*",glob_opt=True)
-        self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster2)+"*",glob_opt=True)
+        if arcpy.env.workspace[-4:].lower() == '.gdb':
+            self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster))
+            self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster2))
+        else:
+            self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster)+"*",glob_opt=True)
+            self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster2)+"*",glob_opt=True)
 
         if np_raster.shape != np_poly_raster.shape:
             self.messages.addError("Rasters for stats calc have differing shape")
@@ -910,14 +915,14 @@ class USNGRollup(object):
         if not os.path.dirname(OUTPUTGRID):
             #if geodatabase, don't use .shp extension
             if os.path.splitext(WORKSPACE)[1].lower() == ".gdb":
-                if os.path.splitext(OUTPUTGRID)[1] != '.shp':
+                if os.path.splitext(OUTPUTGRID)[1] == '.shp':
                     OUTPUTGRID = OUTPUTGRID[:-4]
             OUTPUTGRID = os.path.join(WORKSPACE,OUTPUTGRID)
 
         if not os.path.dirname(OUTPUTFOOTPRINTS):
             #if geodatabase, don't use .shp extension
             if os.path.splitext(WORKSPACE)[1].lower() == ".gdb":
-                if os.path.splitext(OUTPUTFOOTPRINTS)[1] != '.shp':
+                if os.path.splitext(OUTPUTFOOTPRINTS)[1] == '.shp':
                     OUTPUTFOOTPRINTS = OUTPUTFOOTPRINTS[:-4]
             OUTPUTFOOTPRINTS = os.path.join(WORKSPACE,OUTPUTFOOTPRINTS)
 
