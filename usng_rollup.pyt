@@ -852,13 +852,13 @@ class USNGRollup(object):
 
         # Output footprints polygon
         param8 = arcpy.Parameter(
-            displayName="Output raster footprints shp or feature class",
+            displayName="Output raster extents shp or feature class",
             name="OUTPUTFOOTPRINTS",
             datatype="GPFeatureLayer",
             parameterType="Required",
             direction="Output")
         param8.parameterDependencies = [param2.name]
-        param8.value = "footprints.shp"
+        param8.value = "extents.shp"
 
         params = [param0, param1, param2, param3, param4, param5, param6, param7, param8]
 
