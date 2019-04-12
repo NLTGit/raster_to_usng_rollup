@@ -134,9 +134,10 @@ class RasterProcessor:
         self.messages = messages
 
     def process_raster(self):
+        self.messages.addMessage("processing raster: {}".format(self.rastername))
         if self.precheck_db():
             self.messages.addWarningMessage("Warning: Identical data found in database")
-            self.messages.addWarningMessage("Discontinuing processing")
+            self.messages.addWarningMessage("Shortcutting processing for this raster")
             return
 
         self.get_zonal_stats_np_array(self.raster)
@@ -146,7 +147,7 @@ class RasterProcessor:
         """
         Create the output file and append all relevant data
         """
-
+        self.messages.addMessage("creating output files")
         self.create_output_file()
         self.create_output_footprints()
         for rasterid in self.get_current_poly_rasterids():
@@ -160,10 +161,12 @@ class RasterProcessor:
         :return: Whether the analysis settings have been used before
         :rtype: Bool
         """
+        self.messages.addMessage("checking if previous analysis settings have been used before")
         self.create_sqlite_schema()
         return self.analysis_has_been_run()
 
     def update_db(self):
+        self.messages.addMessage("updating local sqlite database with poly-raster data")
         rasterid = self.load_raster_table()
         self.load_poly_table(rasterid)
         self.load_zonal_table(rasterid)
@@ -173,7 +176,7 @@ class RasterProcessor:
         """
         Create the schema for the db
         """
-
+        self.messages.addMessage("creating sqlite table schema")
         with DBC(self.db, self.messages) as dbc:
             dbc.execute("""
                 CREATE TABLE IF NOT EXISTS raster (
@@ -221,6 +224,7 @@ class RasterProcessor:
         :param rasterid: Row id corresponding to the raster table
         :type rasterid: Int
         """
+        self.messages.addMessage("populating the polygon table data")
         with DBC(self.db, self.messages) as dbc:
             insert_sql = """
                 INSERT into poly(raster_id, name, hash, zone)
@@ -235,7 +239,7 @@ class RasterProcessor:
         :param rasterid: Row id corresponding to the raster table
         :type rasterid: Int
         """
-
+        self.messages.addMessage("populating the zonalstatistics table")
         with DBC(self.db, self.messages) as dbc:
             insert_sql = """
                 INSERT into zonal_stats(raster_id, feature_id, count, min, max, mean, median, std)
@@ -251,6 +255,7 @@ class RasterProcessor:
         :return: rasterid
         :rtype: Integer
         """
+        self.messages.addMessage("populating the raster table")
         with DBC(self.db, self.messages) as dbc:
             insert_sql = """
                 INSERT INTO raster(name, hash, referencedate) 
@@ -271,7 +276,7 @@ class RasterProcessor:
         :param rasterid: Unique raster id
         :type rasterid: Integer
         """
-
+        self.messages.addMessage("populating the raster footprints table")
         # get the raster extent and spatial reference
         arcpy_extent = str(arcpy.Raster(self.raster).extent)
         arcpy_in_sref = arcpy.Describe(self.raster).spatialReference
@@ -303,6 +308,7 @@ class RasterProcessor:
         :return: Raster ids in ascending order by timestamp
         :rtype: List
         """
+        self.messages.addMessage("getting all relevant rasters in the db analyzed by this polygon")
         with DBC(self.db, self.messages) as dbc:
             # if the timestamp filters are active, filter the data appearing in the output file
             if self.start_timestamp and self.end_timestamp:
@@ -336,6 +342,7 @@ class RasterProcessor:
             return [r[0] for r in results]
 
     def truncate_db(self):
+        self.messages.addWarningMessage("truncating database")
         with DBC(self.db, self.messages) as dbc:
             delete_sql = """
                 DELETE FROM raster;
@@ -343,6 +350,7 @@ class RasterProcessor:
             dbc.execute(delete_sql)
 
     def clear_db(self):
+        self.messages.addWarningMessage("clearing database tables")
         with DBC(self.db, self.messages) as dbc:
             drop_sql = """DROP TABLE raster;"""
             dbc.execute(drop_sql)
@@ -363,6 +371,7 @@ class RasterProcessor:
         :return: Whether the raster and polygon are in the db
         :rtype: Bool
         """
+        self.messages.addMessage("determine if identical analysis has already been run")
         with DBC(self.db, self.messages) as dbc:
             # check whether the hash values and column zone key exist in the DB
             select_sql = """
@@ -393,6 +402,7 @@ class RasterProcessor:
         :return: Hash value for file at location
         :rtype: String
         """
+        self.messages.addMessage("generating md5sum for {}".format(file_name))
         hash_md5 = hashlib.md5()
 
         # if in a gdb, handle the cases
@@ -452,6 +462,7 @@ class RasterProcessor:
         :return: A random filename
         :rtype: String
         """
+        self.messages.addMessage("generating random file with extension {}".format(ext))
         # if begins with . discard
         if ext[0] == ".":
             ext = ext[1:]
@@ -467,6 +478,7 @@ class RasterProcessor:
         :param raster: The location of a raster on disk
         :type raster: String
         """
+        self.messages.addMessage("generating zonal statistics")
         arcpyraster = arcpy.Raster(raster)
         raster_desc = arcpy.Describe(arcpyraster)
 
@@ -559,6 +571,7 @@ class RasterProcessor:
         :return: None
         :rtype: None
         """
+        self.messages.addMessage("removing input file {}".format(input_file))
         try:
             if glob_opt:
                 for match in glob.glob(input_file):
@@ -580,11 +593,10 @@ class RasterProcessor:
         :return: Formatted timestamp or None
         :rtype: String
         """
-
         # shortcut no input on the timestamp (default handling for class)
         if not timestamp:
             return None
-
+        self.messages.addMessage("validating timestamp {}".format(timestamp))
         # check if input timestamp follows raster name format
         pattern_2digityear = "[0-9]{6}_[0-9]{6}" # 020618_161215
         pattern_4digityear = "[0-9]{8}_[0-9]{6}" # 02062018_161215
@@ -610,6 +622,8 @@ class RasterProcessor:
         :rtype: String
         """
 
+        self.messages.addMessage("generating timestamp from text: {}".format(intext))
+
         pattern_2digityear = "[0-9]{6}_[0-9]{6}" # 020618_161215
         pattern_4digityear = "[0-9]{8}_[0-9]{6}" # 02062018_161215
 
@@ -632,6 +646,7 @@ class RasterProcessor:
         """
         Crete the output shapefile to be joined with statistics
         """
+        self.messages.addMessage("creating output polygon file")
         arcpy.CopyFeatures_management(self.poly, self.outpoly)
         try:
             arcpy.RemoveIndex_management(self.poly, ["id_idx"])
@@ -643,7 +658,7 @@ class RasterProcessor:
         """
         Create the footprints output table showing the raster coverage and collection dates
         """
-
+        self.messages.addMessage("creating output footprint file")
         out_path = os.path.dirname(self.outfootprints)
         out_name = os.path.basename(self.outfootprints)
         out_sref = arcpy.SpatialReference('Geographic Coordinate Systems/World/WGS 1984')
@@ -660,7 +675,7 @@ class RasterProcessor:
         :param rasterid: The rasterid of a dataset to be added
         :type rasterid: Integer
         """
-
+        self.messages.addMessage("joining the zonal statistics to the output polygon")
         # keep running list of fields to be updated
         update_fields = [self.zonefield]
 
@@ -706,7 +721,7 @@ class RasterProcessor:
         :param rasterid: the rasterid of a dataset to be appended
         :type rasterid: Integer
         """
-
+        self.messages.addMessage("join footprints to the output polygon")
         with DBC(self.db, self.messages) as dbc:
             select_sql = """
                 SELECT r.the_geom, l.name, l.referencedate
