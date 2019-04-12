@@ -3,6 +3,7 @@ data/db/*
 data/testdata/*.gdb
 data/testdata/*output*
 data/testdata/*footprints*
+data/
 data/toolworkspace
 venv/
 *.lock
