@@ -118,6 +118,7 @@ class RasterProcessor:
     def __init__(self, db, inpoly, outpoly, outfootprints, zonefield, raster, start_timestamp=None, end_timestamp=None, messages=None):
         self.db = db
         self.poly = inpoly
+        self.messages = messages
         self.polyname = os.path.basename(inpoly)
         self.polyhash = self.generate_md5(inpoly)
         self.outpoly = outpoly
@@ -131,7 +132,7 @@ class RasterProcessor:
         self.start_timestamp = self.validate_timestamp(start_timestamp)
         self.end_timestamp = self.validate_timestamp(end_timestamp)
         self.outfootprints = outfootprints
-        self.messages = messages
+
 
     def process_raster(self):
         self.messages.addMessage("processing raster: {}".format(self.rastername))
@@ -469,7 +470,10 @@ class RasterProcessor:
 
         random_letter = random.choice(string.ascii_lowercase)
         random_uuid = str(uuid.uuid4().hex)[:9]
-        return "{}{}.{}".format(random_letter, random_uuid, ext)
+        if ext == "":
+            return "{}{}".format(random_letter, random_uuid)
+        else:
+            return "{}{}.{}".format(random_letter, random_uuid, ext)
 
     def get_zonal_stats_np_array(self, raster):
         """
@@ -493,8 +497,13 @@ class RasterProcessor:
         arcpy.env.snapRaster = arcpyraster
         arcpy.env.extent = arcpyraster.extent
 
-        # Process: Polygon to Raster
-        temp_raster = self.generate_random_file("tif")
+        # If workspace is a folder, make a tif, else put in gdb
+        if arcpy.env.workspace[-4:].lower == '.gdb':
+            temp_raster = self.generate_random_file("")
+        else:
+            temp_raster = self.generate_random_file("tif")
+
+        # Process polygon to raster
         arcpy.PolygonToRaster_conversion(self.poly,
                                          oid_fieldname,
                                          temp_raster,
