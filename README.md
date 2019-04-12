@@ -9,6 +9,4 @@ To determine if there are issues with python toolboxes in your current environme
 
 
 ###TODO
-1. create toolbox GUI
-2. report status and progress to user
-3. (optional) test on different arcgis versions
+1. report status and progress to user
