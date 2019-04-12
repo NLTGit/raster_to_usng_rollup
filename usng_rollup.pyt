@@ -10,25 +10,7 @@ import random
 import hashlib
 import sqlite3
 import datetime
-from arcpy import env
 from contextlib import closing
-
-
-# Globals
-# TODO Set as tool/gui inputs
-ROOTDIR = r'G:\ssdworkspace\raster_to_usng_rollup\data'
-WORKSPACE = r'{}\scratch'.format(ROOTDIR)
-SQLITEDB = r'{}\db\rollupdata.sqlite'.format(ROOTDIR)
-USNGGRID = r'{}\testdata\usng_1k_withpr.shp'.format(ROOTDIR)
-ZONEFIELD = "USNG_1KM"
-RASTER = r'{}\testdata\Irma_DG_MO_FEMANHRAP_020618_161215.tif'.format(ROOTDIR)
-OUTPUTGRID = r'{}\testdata\usng_output.shp'.format(ROOTDIR)
-OUTPUTFOOTPRINTS = r'{}\testdata\footprints.shp'.format(ROOTDIR)
-# user input timestamps can be mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss
-#STARTTIMESTAMP = '020618_000000'
-STARTTIMESTAMP = '2018-02-06 00:00:00'
-#ENDTIMESTAMP = '020618_235959'
-ENDTIMESTAMP = '2018-02-06 23:59:59'
 
 
 class DBC:
@@ -132,7 +114,7 @@ class RasterProcessor:
     """
     Management of the zonal stats database
     """
-    def __init__(self, db, inpoly, outpoly, outfootprints, zonefield, raster, start_timestamp=None, end_timestamp=None):
+    def __init__(self, db, inpoly, outpoly, outfootprints, zonefield, raster, start_timestamp=None, end_timestamp=None, messages=None):
         self.db = db
         self.poly = inpoly
         self.polyname = os.path.basename(inpoly)
@@ -148,11 +130,12 @@ class RasterProcessor:
         self.start_timestamp = self.validate_timestamp(start_timestamp)
         self.end_timestamp = self.validate_timestamp(end_timestamp)
         self.outfootprints = outfootprints
+        self.messages = messages
 
     def process_raster(self):
         if self.precheck_db():
-            print("Warning: Identical data found in database")
-            print("Discontinuing processing")
+            self.messages.addWarningMessage("Warning: Identical data found in database")
+            self.messages.addWarningMessage("Discontinuing processing")
             return
 
         self.get_zonal_stats_np_array(self.raster)
@@ -735,21 +718,204 @@ class RasterProcessor:
                 cursor.insertRow(results)
 
 
-if __name__ == "__main__":
+class Toolbox(object):
+    def __init__(self):
+        """Define the toolbox"""
+        self.label = "usng_rollup"
+        self.alias = "USNG Rollup"
 
-    # Config
-    env.overwriteOutput = 1
-    env.workspace = WORKSPACE
+        # List of tool classes associated with this toolbox
+        self.tools = [USNGRollup]
 
-    proc = RasterProcessor(SQLITEDB,
-                           USNGGRID,
-                           OUTPUTGRID,
-                           OUTPUTFOOTPRINTS,
-                           ZONEFIELD,
-                           RASTER,
-                           STARTTIMESTAMP,
-                           ENDTIMESTAMP)
-    #proc.clear_db()
-    #proc.truncate_db()
-    #proc.process_raster()
-    proc.create_output()
+
+class USNGRollup(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Process Data"
+        self.description = "This tool generates raster statistics for a set of input rasters by an input polygon"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+
+        # work directory
+        param0 = arcpy.Parameter(
+            displayName="Workspace",
+            name="WORKSPACE",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input")
+
+        # In the tool's dialog box, the first parameter will show
+        #  the workspace environment's value (if set)
+        param0.defaultEnvironmentName = "workspace"
+
+        param1 = arcpy.Parameter(
+            displayName="SQLite database",
+            name="SQLITEDB",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+        param1.value = "db.sqlite"
+
+        # Polygon feature to perform rollup
+        param2 = arcpy.Parameter(
+            displayName="Input polygon (e.x. USNG shp)",
+            name="USNGGRID",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input")
+        param2.filter.list = ["Polygon"]
+
+        # Name field to be stored in the DB
+        param3 = arcpy.Parameter(
+            displayName="Unique field name (e.x. USNG name column)",
+            name="ZONEFIELD",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input")
+        param3.parameterDependencies = [param2.name]
+
+        # Raster lists
+        param4 = arcpy.Parameter(
+            displayName="Input rasters",
+            name="RASTER_LIST",
+            datatype="DERasterDataset",
+            parameterType="Required",
+            direction="Input",
+            multiValue=True)
+
+        param5 = arcpy.Parameter(
+            displayName="Start timestamp filter (optional) - mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss",
+            name="STARTTIMESTAMP",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        param6 = arcpy.Parameter(
+            displayName="End timestamp filter (optional) - mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss",
+            name="ENDTIMESTAMP",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        # Output statistics polygon - a copy of the USNG file with attached statistics
+        param7 = arcpy.Parameter(
+            displayName="Output statistics shp or feature class",
+            name="OUTPUTGRID",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Output")
+        param7.parameterDependencies = [param2.name]
+        param7.value = "statistics.shp"
+
+        # Output footprints polygon
+        param8 = arcpy.Parameter(
+            displayName="Output raster footprints shp or feature class",
+            name="OUTPUTFOOTPRINTS",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Output")
+        param8.parameterDependencies = [param2.name]
+        param8.value = "footprints.shp"
+
+        params = [param0, param1, param2, param3, param4, param5, param6, param7, param8]
+
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        WORKSPACE = parameters[0].valueAsText
+        RASTER_LIST = parameters[4].valueAsText.split(";")
+        SQLITEDB = parameters[1].valueAsText
+        USNGGRID = parameters[2].valueAsText
+        OUTPUTGRID = parameters[7].valueAsText
+        OUTPUTFOOTPRINTS = parameters[8].valueAsText
+        ZONEFIELD = parameters[3].valueAsText
+        STARTTIMESTAMP = parameters[5].valueAsText
+        ENDTIMESTAMP = parameters[6].valueAsText
+
+        # == SQLITE DB== #
+        # if the extension isn't .sqlite, add it
+        if os.path.splitext(SQLITEDB)[1] != '.sqlite':
+            _, file_extension = os.path.splitext(SQLITEDB)
+            SQLITEDB = SQLITEDB[:len(SQLITEDB)-len(file_extension)]+".sqlite"
+            messages.addWarningMessage("replaced database extension in filename")
+            messages.addMessage(SQLITEDB)
+
+        # if the full filepath of the database hasn't been specified
+        if not os.path.dirname(SQLITEDB):
+
+            # put it in the workspace parent dir if geodatabase
+            if os.path.splitext(WORKSPACE)[1].lower() == ".gdb":
+                messages.addWarningMessage("Workspace is not a folder - placing sqlite db in workspace parent directory")
+                parent_dir = os.path.dirname(WORKSPACE)
+                SQLITEDB = os.path.join(parent_dir, SQLITEDB)
+                messages.addWarningMessage(SQLITEDB)
+
+            # otherwise put the database in the workspace
+            else:
+                messages.addMessage("Creating sqlite database in workspace")
+                SQLITEDB = os.path.join(WORKSPACE, SQLITEDB)
+        else:
+            messages.addMessage("Sqlite db full path provided by user")
+
+        # == TIMESTAMP HANDLING == #
+        if not STARTTIMESTAMP or not ENDTIMESTAMP:
+            messages.addMessage("No timestamp filter active")
+            STARTTIMESTAMP = None
+            ENDTIMESTAMP = None
+
+        # == OUTPUT FILE NAME/TYPE HANDLING == #
+        # if the full filepath of the output isn't specified, put in workspace
+        if not os.path.dirname(OUTPUTGRID):
+            #if geodatabase, don't use .shp extension
+            if os.path.splitext(WORKSPACE)[1].lower() == ".gdb":
+                if os.path.splitext(OUTPUTGRID)[1] != '.shp':
+                    OUTPUTGRID = OUTPUTGRID[:-4]
+            OUTPUTGRID = os.path.join(WORKSPACE,OUTPUTGRID)
+
+        if not os.path.dirname(OUTPUTFOOTPRINTS):
+            #if geodatabase, don't use .shp extension
+            if os.path.splitext(WORKSPACE)[1].lower() == ".gdb":
+                if os.path.splitext(OUTPUTFOOTPRINTS)[1] != '.shp':
+                    OUTPUTFOOTPRINTS = OUTPUTFOOTPRINTS[:-4]
+            OUTPUTFOOTPRINTS = os.path.join(WORKSPACE,OUTPUTFOOTPRINTS)
+
+
+        # if the output shapefiles have no path, put them in the workspace
+        arcpy.env.overwriteOutput = 1
+        arcpy.env.workspace = WORKSPACE
+
+        for RASTER in RASTER_LIST:
+            messages.addMessage("Processing: {}".format(RASTER))
+            proc = RasterProcessor(SQLITEDB,
+                                   USNGGRID,
+                                   OUTPUTGRID,
+                                   OUTPUTFOOTPRINTS,
+                                   ZONEFIELD,
+                                   RASTER,
+                                   STARTTIMESTAMP,
+                                   ENDTIMESTAMP,
+                                   messages)
+            proc.process_raster()
+
+            # if last raster, create the output files
+            if RASTER == RASTER_LIST[-1]:
+                proc.create_output()
+
+        return
