@@ -1,6 +1,7 @@
 from __future__ import with_statement
 import os
 import re
+import sys
 import arcpy
 import glob
 import uuid
@@ -135,7 +136,7 @@ class RasterProcessor:
 
 
     def process_raster(self):
-        self.messages.addMessage("processing raster: {}".format(self.rastername))
+        self.messages.addWarningMessage("processing raster: {}".format(self.rastername))
         if self.precheck_db():
             self.messages.addWarningMessage("Warning: Identical data found in database")
             self.messages.addWarningMessage("Shortcutting processing for this raster")
@@ -529,8 +530,21 @@ class RasterProcessor:
         arcpy.env.extent = None
 
         # load the rasters via numpy
-        np_poly_raster = arcpy.RasterToNumPyArray(temp_raster2,lowerLeft, nodata_to_value=-1)
-        np_raster = arcpy.RasterToNumPyArray(arcpyraster,lowerLeft, nodata_to_value=raster_nodataval)
+        np_poly_raster = arcpy.RasterToNumPyArray(temp_raster2, lowerLeft, nodata_to_value=-1)
+        np_raster = arcpy.RasterToNumPyArray(arcpyraster, lowerLeft, nodata_to_value=raster_nodataval)
+
+        # there's a bug in arcgis 10 related to background geoprocessing where snap raster adds 1 extra row
+        # if there's an extra row in the numpy array, remove it.
+        # https://gis.stackexchange.com/questions/34085/aligning-two-non-coincident-equi-resolution-raster-grids-in-arcgis-desktop/34172#34172
+        if np_poly_raster.shape[0]-1 == np_raster.shape[0]:
+            np_poly_raster = np_poly_raster[:-1, :]
+
+        if np_raster.shape != np_poly_raster.shape:
+            self.messages.addWarningMessage("Rasters for stats calc have differing shape")
+            self.messages.addMessage("np_raster.shape: {}".format(np_raster.shape))
+            self.messages.addMessage("np_poly_raster.shape: {}".format(np_poly_raster.shape))
+            arcpy.AddError("Mismatched Raster Dims")
+            sys.exit(1)
 
         # cleanup temp filesystem rasters after conversion
         if arcpy.env.workspace[-4:].lower() == '.gdb':
@@ -539,9 +553,6 @@ class RasterProcessor:
         else:
             self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster)+"*",glob_opt=True)
             self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster2)+"*",glob_opt=True)
-
-        if np_raster.shape != np_poly_raster.shape:
-            self.messages.addError("Rasters for stats calc have differing shape")
 
         # get unique raster values, remove nodata value
         poly_raster_vals = numpy.unique(np_poly_raster).tolist()
