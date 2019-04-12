@@ -17,7 +17,7 @@ class DBC:
     """
     The DBC class controls connections and execution to the sqlite database.
     """
-    def __init__(self, db):
+    def __init__(self, db, messages):
         """
         Manage the database location and connection
 
@@ -25,6 +25,7 @@ class DBC:
         :type db: String
         """
         self.db = db
+        self.messages = messages
         self.conn = None
         self.create_db()
         self.connect()
@@ -44,7 +45,7 @@ class DBC:
         Create the sqlite db if it doesn't exist
         """
         if not os.path.exists(self.db):
-            print("Database does not exist - Creating")
+            self.messages.addMessage("Database does not exist - Creating")
             db_dir = os.path.dirname(self.db)
             if not os.path.exists(db_dir):
                 os.makedirs(db_dir)
@@ -59,7 +60,7 @@ class DBC:
             self.conn.execute("PRAGMA foreign_keys = 1")
 
         except sqlite3.Error as e:
-            print(e)
+            self.messages.addError(e)
             self.conn = None
 
     def execute(self, sql, params=(), returntype=None):
@@ -89,7 +90,7 @@ class DBC:
                     return cursor.fetchone()
 
             except sqlite3.Error as e:
-                print(e)
+                self.messages.addError(e)
                 return
 
     def executemany(self, sql, params=()):
@@ -106,7 +107,7 @@ class DBC:
                 cursor.executemany(sql, params)
 
             except sqlite3.Error as e:
-                print(e)
+                self.messages.addError(e)
                 return
 
 
@@ -173,7 +174,7 @@ class RasterProcessor:
         Create the schema for the db
         """
 
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             dbc.execute("""
                 CREATE TABLE IF NOT EXISTS raster (
                   id INTEGER PRIMARY KEY,
@@ -220,7 +221,7 @@ class RasterProcessor:
         :param rasterid: Row id corresponding to the raster table
         :type rasterid: Int
         """
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             insert_sql = """
                 INSERT into poly(raster_id, name, hash, zone)
                 VALUES (?,?,?,?)
@@ -235,7 +236,7 @@ class RasterProcessor:
         :type rasterid: Int
         """
 
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             insert_sql = """
                 INSERT into zonal_stats(raster_id, feature_id, count, min, max, mean, median, std)
                 VALUES (?,?,?,?,?,?,?,?)
@@ -250,7 +251,7 @@ class RasterProcessor:
         :return: rasterid
         :rtype: Integer
         """
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             insert_sql = """
                 INSERT INTO raster(name, hash, referencedate) 
                 VALUES (?,?,?)
@@ -288,7 +289,7 @@ class RasterProcessor:
         polygon = arcpy.Polygon(point_array, arcpy_in_sref).projectAs(arcpy_out_sref)
 
         # update database
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             insert_sql = """
                 INSERT INTO raster_footprint(raster_id, the_geom) 
                 VALUES (?,?)
@@ -302,7 +303,7 @@ class RasterProcessor:
         :return: Raster ids in ascending order by timestamp
         :rtype: List
         """
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             # if the timestamp filters are active, filter the data appearing in the output file
             if self.start_timestamp and self.end_timestamp:
                 select_sql = """
@@ -335,14 +336,14 @@ class RasterProcessor:
             return [r[0] for r in results]
 
     def truncate_db(self):
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             delete_sql = """
                 DELETE FROM raster;
             """
             dbc.execute(delete_sql)
 
     def clear_db(self):
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             drop_sql = """DROP TABLE raster;"""
             dbc.execute(drop_sql)
 
@@ -362,7 +363,7 @@ class RasterProcessor:
         :return: Whether the raster and polygon are in the db
         :rtype: Bool
         """
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             # check whether the hash values and column zone key exist in the DB
             select_sql = """
                 SELECT 1
@@ -411,8 +412,8 @@ class RasterProcessor:
                 hash_md5.update(str(fcount)+str(desc.extent))
 
             else:
-                print("ERROR: Unrecognized gdb input type {}, not feature or raster".format(desc.dataType))
-                print("File: {}".format(file_name))
+                self.messages.addError("Unrecognized gdb input type {}, not feature or raster".format(desc.dataType))
+                self.messages.addError("File: {}".format(file_name))
 
         # if the file is a shapefile on the fs, hash the shp and dbf, combine
         elif file_name[-4:] == '.shp' and os.path.exists(file_name[:-4] + ".dbf"):
@@ -514,7 +515,7 @@ class RasterProcessor:
         self.arcpy_rm_file(os.path.join(arcpy.env.workspace,temp_raster2)+"*",glob_opt=True)
 
         if np_raster.shape != np_poly_raster.shape:
-            print("ERROR: Rasters for stats calc have differing shape")
+            self.messages.addError("Rasters for stats calc have differing shape")
 
         # get unique raster values, remove nodata value
         poly_raster_vals = numpy.unique(np_poly_raster).tolist()
@@ -595,7 +596,7 @@ class RasterProcessor:
                 datetime.datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
                 return timestamp
             except ValueError:
-                print("Incorrect date format should be y-m-d h:m:s, mmddyy_hhmmss, or mmddyyyy_hhmmss")
+                self.messages.addError("Incorrect date format should be y-m-d h:m:s, mmddyy_hhmmss, or mmddyyyy_hhmmss")
                 return None
         else:
             # convert to y-m-d h:m:s
@@ -671,7 +672,7 @@ class RasterProcessor:
             update_fields.append(fieldname_wid)
             arcpy.AddField_management(self.outpoly, fieldname_wid, "FLOAT")
 
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             select_sql = """
                 SELECT feature_id, count, min, max, mean, median, std
                 FROM zonal_stats z
@@ -706,7 +707,7 @@ class RasterProcessor:
         :type rasterid: Integer
         """
 
-        with DBC(self.db) as dbc:
+        with DBC(self.db, self.messages) as dbc:
             select_sql = """
                 SELECT r.the_geom, l.name, l.referencedate
                 FROM raster l
