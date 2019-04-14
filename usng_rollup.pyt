@@ -284,18 +284,28 @@ class RasterProcessor:
         """
         self.messages.addMessage("populating the raster footprints table")
         # get the raster extent and spatial reference
-        arcpy_extent = str(arcpy.Raster(self.raster).extent)
+        # arcpy_extent = str(arcpy.Raster(self.raster).extent)
+        arcpy_extent = arcpy.Raster(self.raster).extent
         arcpy_in_sref = arcpy.Describe(self.raster).spatialReference
-        XMin, YMin, XMax, YMax = arcpy_extent.split()[:4]
+        # XMin, YMin, XMax, YMax = arcpy_extent.split()[:4]
 
         # Use the extent to create a polygon, project to wgs84
+        # point_array = arcpy.Array([
+        #                      arcpy.Point(XMin, YMin),
+        #                      arcpy.Point(XMin, YMax),
+        #                      arcpy.Point(XMax, YMax),
+        #                      arcpy.Point(XMax, YMin),
+        #                      arcpy.Point(XMin, YMin)
+        #                      ])
+
         point_array = arcpy.Array([
-                             arcpy.Point(XMin, YMin),
-                             arcpy.Point(XMin, YMax),
-                             arcpy.Point(XMax, YMax),
-                             arcpy.Point(XMax, YMin),
-                             arcpy.Point(XMin, YMin)
-                             ])
+            arcpy_extent.lowerLeft,
+            arcpy_extent.upperLeft,
+            arcpy_extent.upperRight,
+            arcpy_extent.lowerRight,
+            arcpy_extent.lowerLeft
+        ])
+
         arcpy_out_sref = arcpy.SpatialReference('Geographic Coordinate Systems/World/WGS 1984')
         polygon = arcpy.Polygon(point_array, arcpy_in_sref).projectAs(arcpy_out_sref)
 
@@ -411,8 +421,15 @@ class RasterProcessor:
         self.messages.addMessage("generating md5sum for {}".format(file_name))
         hash_md5 = hashlib.md5()
 
+        try:
+            desc = arcpy.Describe(file_name)
+            format = desc.format
+        except:
+            format = None
+
+
         # if in a gdb, handle the cases
-        if ".gdb" in file_name:
+        if ".gdb" in file_name or format:
             desc=arcpy.Describe(file_name)
 
             # raster gdb, hash the file size and band standard dev
@@ -422,14 +439,16 @@ class RasterProcessor:
                 hash_md5.update(str(rast.uncompressedSize)+str(stdev))
 
             # shp gdb, hash the extent and feature count
-            if desc.dataType == "FeatureClass":
+            elif desc.dataType == "FeatureClass":
                 fcount = arcpy.GetCount_management(file_name).getOutput(0)
                 desc = arcpy.Describe(file_name)
                 hash_md5.update(str(fcount)+str(desc.extent))
 
             else:
-                self.messages.addError("Unrecognized gdb input type {}, not feature or raster".format(desc.dataType))
-                self.messages.addError("File: {}".format(file_name))
+                self.messages.addWarningMessage("Unrecognized gdb input type {}, not feature or raster".format(desc.dataType))
+                self.messages.addWarningMessage("File: {}".format(file_name))
+                arcpy.AddError("Could not generate hash of input")
+                sys.exit(1)
 
         # if the file is a shapefile on the fs, hash the shp and dbf, combine
         elif file_name[-4:] == '.shp' and os.path.exists(file_name[:-4] + ".dbf"):
