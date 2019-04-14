@@ -120,16 +120,18 @@ class RasterProcessor:
         self.db = db
         self.poly = inpoly
         self.messages = messages
-        self.polyname = os.path.basename(inpoly)
-        self.polyhash = self.generate_md5(inpoly)
+        if inpoly:
+            self.polyname = os.path.basename(inpoly)
+            self.polyhash = self.generate_md5(inpoly)
         self.outpoly = outpoly
         self.zonefield = zonefield
         self.raster = raster
-        self.rastername = os.path.basename(raster)
-        self.rasterhash = self.generate_md5(raster)
+        if raster:
+            self.rastername = os.path.basename(raster)
+            self.rasterhash = self.generate_md5(raster)
+            self.timestamp = self.timestamp_from_text(self.rastername)
         self.null_raster = None
         self.zonal_stats_data = []
-        self.timestamp = self.timestamp_from_text(self.rastername)
         self.start_timestamp = self.validate_timestamp(start_timestamp)
         self.end_timestamp = self.validate_timestamp(end_timestamp)
         self.outfootprints = outfootprints
@@ -766,13 +768,13 @@ class Toolbox(object):
         self.alias = "USNG Rollup"
 
         # List of tool classes associated with this toolbox
-        self.tools = [USNGRollup]
+        self.tools = [ProcessRasters, ExportData, ClearDB]
 
 
-class USNGRollup(object):
+class ProcessRasters(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
-        self.label = "Process Data"
+        self.label = "01 - Process Raster Data"
         self.description = "This tool generates raster statistics for a set of input rasters by an input polygon"
         self.canRunInBackground = False
 
@@ -786,13 +788,12 @@ class USNGRollup(object):
             datatype="DEWorkspace",
             parameterType="Required",
             direction="Input")
-
         # In the tool's dialog box, the first parameter will show
         #  the workspace environment's value (if set)
         param0.defaultEnvironmentName = "workspace"
 
         param1 = arcpy.Parameter(
-            displayName="SQLite database",
+            displayName="SQLite database - will be created in or beside workspace if does not exist",
             name="SQLITEDB",
             datatype="GPString",
             parameterType="Required",
@@ -826,41 +827,7 @@ class USNGRollup(object):
             direction="Input",
             multiValue=True)
 
-        param5 = arcpy.Parameter(
-            displayName="Start timestamp filter - mmddyy_hhmmss, mmddyyyy_hhmmss, yyyy-mm-dd hh:mm:ss",
-            name="STARTTIMESTAMP",
-            datatype="GPString",
-            parameterType="Optional",
-            direction="Input")
-
-        param6 = arcpy.Parameter(
-            displayName="End timestamp filter - mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss",
-            name="ENDTIMESTAMP",
-            datatype="GPString",
-            parameterType="Optional",
-            direction="Input")
-
-        # Output statistics polygon - a copy of the USNG file with attached statistics
-        param7 = arcpy.Parameter(
-            displayName="Output statistics shp or feature class",
-            name="OUTPUTGRID",
-            datatype="GPFeatureLayer",
-            parameterType="Required",
-            direction="Output")
-        param7.parameterDependencies = [param2.name]
-        param7.value = "statistics.shp"
-
-        # Output footprints polygon
-        param8 = arcpy.Parameter(
-            displayName="Output raster extents shp or feature class",
-            name="OUTPUTFOOTPRINTS",
-            datatype="GPFeatureLayer",
-            parameterType="Required",
-            direction="Output")
-        param8.parameterDependencies = [param2.name]
-        param8.value = "extents.shp"
-
-        params = [param0, param1, param2, param3, param4, param5, param6, param7, param8]
+        params = [param0, param1, param2, param3, param4]
 
         return params
 
@@ -881,14 +848,10 @@ class USNGRollup(object):
 
     def execute(self, parameters, messages):
         WORKSPACE = parameters[0].valueAsText
-        RASTER_LIST = parameters[4].valueAsText.split(";")
         SQLITEDB = parameters[1].valueAsText
         USNGGRID = parameters[2].valueAsText
-        OUTPUTGRID = parameters[7].valueAsText
-        OUTPUTFOOTPRINTS = parameters[8].valueAsText
         ZONEFIELD = parameters[3].valueAsText
-        STARTTIMESTAMP = parameters[5].valueAsText
-        ENDTIMESTAMP = parameters[6].valueAsText
+        RASTER_LIST = parameters[4].valueAsText.split(";")
 
         # == SQLITE DB== #
         # if the extension isn't .sqlite, add it
@@ -915,6 +878,134 @@ class USNGRollup(object):
         else:
             messages.addMessage("Sqlite db full path provided by user")
 
+        arcpy.env.overwriteOutput = 1
+        arcpy.env.workspace = WORKSPACE
+
+        for RASTER in RASTER_LIST:
+            messages.addMessage("Processing: {}".format(RASTER))
+            proc = RasterProcessor(SQLITEDB,
+                                   USNGGRID,
+                                   None,
+                                   None,
+                                   ZONEFIELD,
+                                   RASTER,
+                                   None,
+                                   None,
+                                   messages)
+            proc.process_raster()
+
+        return
+
+
+class ExportData(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "02 - Export Polygon Data"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+
+        # work directory
+        param0 = arcpy.Parameter(
+            displayName="Workspace",
+            name="WORKSPACE",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input")
+        # In the tool's dialog box, the first parameter will show
+        #  the workspace environment's value (if set)
+        param0.defaultEnvironmentName = "workspace"
+
+        param1 = arcpy.Parameter(
+            displayName="SQLite database",
+            name="SQLITEDB",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input")
+
+        # Polygon feature to perform rollup
+        param2 = arcpy.Parameter(
+            displayName="Input polygon (e.x. USNG shp) used to process raster data",
+            name="USNGGRID",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input")
+        param2.filter.list = ["Polygon"]
+
+        # Name field to be stored in the DB
+        param3 = arcpy.Parameter(
+            displayName="Unique field name (e.x. USNG name column)",
+            name="ZONEFIELD",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input")
+        param3.parameterDependencies = [param2.name]
+
+        # Output statistics polygon - a copy of the USNG file with attached statistics
+        param4 = arcpy.Parameter(
+            displayName="Output statistics shp or feature class",
+            name="OUTPUTGRID",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Output")
+        param4.parameterDependencies = [param0.name]
+        param4.value = "statistics.shp"
+
+        # Output footprints polygon
+        param5 = arcpy.Parameter(
+            displayName="Output raster extents shp or feature class",
+            name="OUTPUTFOOTPRINTS",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Output")
+        param5.parameterDependencies = [param0.name]
+        param5.value = "extents.shp"
+
+        param6 = arcpy.Parameter(
+            displayName="Start timestamp (mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss)",
+            name="STARTTIMESTAMP",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        param7 = arcpy.Parameter(
+            displayName="End timestamp (mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss)",
+            name="ENDTIMESTAMP",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        params = [param0, param1, param2, param3, param4, param5, param6, param7]
+
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        WORKSPACE = parameters[0].valueAsText
+        SQLITEDB = parameters[1].valueAsText
+        USNGGRID = parameters[2].valueAsText
+        ZONEFIELD = parameters[3].valueAsText
+        OUTPUTGRID = parameters[4].valueAsText
+        OUTPUTFOOTPRINTS = parameters[5].valueAsText
+        STARTTIMESTAMP = parameters[6].valueAsText
+        ENDTIMESTAMP = parameters[7].valueAsText
+
         # == TIMESTAMP HANDLING == #
         if not STARTTIMESTAMP or not ENDTIMESTAMP:
             messages.addMessage("No timestamp filter active")
@@ -937,26 +1028,67 @@ class USNGRollup(object):
                     OUTPUTFOOTPRINTS = OUTPUTFOOTPRINTS[:-4]
             OUTPUTFOOTPRINTS = os.path.join(WORKSPACE,OUTPUTFOOTPRINTS)
 
-
-        # if the output shapefiles have no path, put them in the workspace
         arcpy.env.overwriteOutput = 1
         arcpy.env.workspace = WORKSPACE
 
-        for RASTER in RASTER_LIST:
-            messages.addMessage("Processing: {}".format(RASTER))
-            proc = RasterProcessor(SQLITEDB,
-                                   USNGGRID,
-                                   OUTPUTGRID,
-                                   OUTPUTFOOTPRINTS,
-                                   ZONEFIELD,
-                                   RASTER,
-                                   STARTTIMESTAMP,
-                                   ENDTIMESTAMP,
-                                   messages)
-            proc.process_raster()
+        proc = RasterProcessor(SQLITEDB,
+                               USNGGRID,
+                               OUTPUTGRID,
+                               OUTPUTFOOTPRINTS,
+                               ZONEFIELD,
+                               None,
+                               STARTTIMESTAMP,
+                               ENDTIMESTAMP,
+                               messages)
+        proc.create_output()
 
-            # if last raster, create the output files
-            if RASTER == RASTER_LIST[-1]:
-                proc.create_output()
 
+class ClearDB(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "03 - Clear Database"
+        self.description = ""
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        param0 = arcpy.Parameter(
+            displayName="SQLite database (WARNING: THIS WILL DELETE ALL DATA FROM DB)",
+            name="SQLITEDB",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input")
+        params = [param0]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        messages.addWarningMessage("Deleting data...")
+        SQLITEDB = parameters[0].valueAsText
+        proc = RasterProcessor(SQLITEDB,
+                               None,
+                               None,
+                               None,
+                               None,
+                               None,
+                               None,
+                               None,
+                               messages)
+        proc.clear_db()
+        messages.addWarningMessage("Complete")
         return
