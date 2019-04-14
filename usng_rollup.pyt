@@ -116,15 +116,17 @@ class RasterProcessor:
     """
     Management of the zonal stats database
     """
-    def __init__(self, db, inpoly, outpoly, outfootprints, zonefield, raster, start_timestamp=None, end_timestamp=None, messages=None):
+    def __init__(self, db, inpoly=None, outpoly=None, outfootprints=None, raster=None, start_timestamp=None, end_timestamp=None, messages=None):
         self.db = db
         self.poly = inpoly
         self.messages = messages
         if inpoly:
             self.polyname = os.path.basename(inpoly)
             self.polyhash = self.generate_md5(inpoly)
+            # the zonefield was formerly a keyword argument to make the DB readable
+            # Using the OID simplifies the tool GUI but makes the DB less transparent
+            self.zonefield = arcpy.Describe(self.poly).OIDFieldName
         self.outpoly = outpoly
-        self.zonefield = zonefield
         self.raster = raster
         if raster:
             self.rastername = os.path.basename(raster)
@@ -675,11 +677,12 @@ class RasterProcessor:
         """
         self.messages.addMessage("creating output polygon file")
         arcpy.CopyFeatures_management(self.poly, self.outpoly)
-        try:
-            arcpy.RemoveIndex_management(self.poly, ["id_idx"])
-        except:
-            pass
-        arcpy.AddIndex_management(self.outpoly, self.zonefield, "id_idx")
+        # Using the OID as the zonefield no longer needs an index
+        # try:
+        #     arcpy.RemoveIndex_management(self.poly, ["id_idx"])
+        # except:
+        #     pass
+        # arcpy.AddIndex_management(self.outpoly, self.zonefield, "id_idx")
 
     def create_output_footprints(self):
         """
@@ -723,16 +726,16 @@ class RasterProcessor:
             results = dbc.execute(select_sql, (rasterid,), 'all')
         results_dict = {r[0]: r[1:] for r in results}
 
-        def quote_str(instr):
-            return "'"+instr+"'"
+        # IDs will be integers, not str since using OID or FID
+        #def quote_str(instr):
+        #    return "'"+instr+"'"
         arcpy_sql = '"{0}" IN ({1})'.format(self.zonefield,
-                                            ', '.join(map(quote_str, results_dict.keys())) or 'NULL')
-
+                                            ', '.join(results_dict.keys()) or 'NULL')
         # select all features with rasterstat data and update using dictionary
         # FIELDS: id_field + new count, min, max, mean, median, std
         with arcpy.da.UpdateCursor(self.outpoly, update_fields, arcpy_sql) as cursor:
             for row in cursor:
-                feature_id = row[0] # id field
+                feature_id = str(row[0]) # id field
                 row[1] = results_dict[feature_id][0] # count
                 row[2] = results_dict[feature_id][1] # min
                 row[3] = results_dict[feature_id][2] # max
@@ -809,17 +812,8 @@ class ProcessRasters(object):
             direction="Input")
         param2.filter.list = ["Polygon"]
 
-        # Name field to be stored in the DB
-        param3 = arcpy.Parameter(
-            displayName="Unique field name (e.x. USNG name column)",
-            name="ZONEFIELD",
-            datatype="Field",
-            parameterType="Required",
-            direction="Input")
-        param3.parameterDependencies = [param2.name]
-
         # Raster lists
-        param4 = arcpy.Parameter(
+        param3 = arcpy.Parameter(
             displayName="Input rasters",
             name="RASTER_LIST",
             datatype="DERasterDataset",
@@ -827,7 +821,7 @@ class ProcessRasters(object):
             direction="Input",
             multiValue=True)
 
-        params = [param0, param1, param2, param3, param4]
+        params = [param0, param1, param2, param3]
 
         return params
 
@@ -850,8 +844,7 @@ class ProcessRasters(object):
         WORKSPACE = parameters[0].valueAsText
         SQLITEDB = parameters[1].valueAsText
         USNGGRID = parameters[2].valueAsText
-        ZONEFIELD = parameters[3].valueAsText
-        RASTER_LIST = parameters[4].valueAsText.split(";")
+        RASTER_LIST = parameters[3].valueAsText.split(";")
 
         # == SQLITE DB== #
         # if the extension isn't .sqlite, add it
@@ -883,15 +876,10 @@ class ProcessRasters(object):
 
         for RASTER in RASTER_LIST:
             messages.addMessage("Processing: {}".format(RASTER))
-            proc = RasterProcessor(SQLITEDB,
-                                   USNGGRID,
-                                   None,
-                                   None,
-                                   ZONEFIELD,
-                                   RASTER,
-                                   None,
-                                   None,
-                                   messages)
+            proc = RasterProcessor(db=SQLITEDB,
+                                   inpoly=USNGGRID,
+                                   raster=RASTER,
+                                   messages=messages)
             proc.process_raster()
 
         return
@@ -934,50 +922,41 @@ class ExportData(object):
             direction="Input")
         param2.filter.list = ["Polygon"]
 
-        # Name field to be stored in the DB
-        param3 = arcpy.Parameter(
-            displayName="Unique field name (e.x. USNG name column)",
-            name="ZONEFIELD",
-            datatype="Field",
-            parameterType="Required",
-            direction="Input")
-        param3.parameterDependencies = [param2.name]
-
         # Output statistics polygon - a copy of the USNG file with attached statistics
-        param4 = arcpy.Parameter(
+        param3 = arcpy.Parameter(
             displayName="Output statistics shp or feature class",
             name="OUTPUTGRID",
             datatype="GPFeatureLayer",
             parameterType="Required",
             direction="Output")
-        param4.parameterDependencies = [param0.name]
-        param4.value = "statistics.shp"
+        param3.parameterDependencies = [param0.name]
+        param3.value = "statistics.shp"
 
         # Output footprints polygon
-        param5 = arcpy.Parameter(
+        param4 = arcpy.Parameter(
             displayName="Output raster extents shp or feature class",
             name="OUTPUTFOOTPRINTS",
             datatype="GPFeatureLayer",
             parameterType="Required",
             direction="Output")
-        param5.parameterDependencies = [param0.name]
-        param5.value = "extents.shp"
+        param4.parameterDependencies = [param0.name]
+        param4.value = "extents.shp"
 
-        param6 = arcpy.Parameter(
+        param5 = arcpy.Parameter(
             displayName="Start timestamp (mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss)",
             name="STARTTIMESTAMP",
             datatype="GPString",
             parameterType="Optional",
             direction="Input")
 
-        param7 = arcpy.Parameter(
+        param6 = arcpy.Parameter(
             displayName="End timestamp (mmddyy_hhmmss, mmddyyyy_hhmmss, or yyyy-mm-dd hh:mm:ss)",
             name="ENDTIMESTAMP",
             datatype="GPString",
             parameterType="Optional",
             direction="Input")
 
-        params = [param0, param1, param2, param3, param4, param5, param6, param7]
+        params = [param0, param1, param2, param3, param4, param5, param6]
 
         return params
 
@@ -1000,11 +979,10 @@ class ExportData(object):
         WORKSPACE = parameters[0].valueAsText
         SQLITEDB = parameters[1].valueAsText
         USNGGRID = parameters[2].valueAsText
-        ZONEFIELD = parameters[3].valueAsText
-        OUTPUTGRID = parameters[4].valueAsText
-        OUTPUTFOOTPRINTS = parameters[5].valueAsText
-        STARTTIMESTAMP = parameters[6].valueAsText
-        ENDTIMESTAMP = parameters[7].valueAsText
+        OUTPUTGRID = parameters[3].valueAsText
+        OUTPUTFOOTPRINTS = parameters[4].valueAsText
+        STARTTIMESTAMP = parameters[5].valueAsText
+        ENDTIMESTAMP = parameters[6].valueAsText
 
         # == TIMESTAMP HANDLING == #
         if not STARTTIMESTAMP or not ENDTIMESTAMP:
@@ -1031,15 +1009,13 @@ class ExportData(object):
         arcpy.env.overwriteOutput = 1
         arcpy.env.workspace = WORKSPACE
 
-        proc = RasterProcessor(SQLITEDB,
-                               USNGGRID,
-                               OUTPUTGRID,
-                               OUTPUTFOOTPRINTS,
-                               ZONEFIELD,
-                               None,
-                               STARTTIMESTAMP,
-                               ENDTIMESTAMP,
-                               messages)
+        proc = RasterProcessor(db=SQLITEDB,
+                               inpoly=USNGGRID,
+                               outpoly=OUTPUTGRID,
+                               outfootprints=OUTPUTFOOTPRINTS,
+                               start_timestamp=STARTTIMESTAMP,
+                               end_timestamp=ENDTIMESTAMP,
+                               messages=messages)
         proc.create_output()
 
 
@@ -1080,15 +1056,8 @@ class ClearDB(object):
         """The source code of the tool."""
         messages.addWarningMessage("Deleting data...")
         SQLITEDB = parameters[0].valueAsText
-        proc = RasterProcessor(SQLITEDB,
-                               None,
-                               None,
-                               None,
-                               None,
-                               None,
-                               None,
-                               None,
-                               messages)
+        proc = RasterProcessor(db=SQLITEDB,
+                               messages=messages)
         proc.clear_db()
         messages.addWarningMessage("Complete")
         return
