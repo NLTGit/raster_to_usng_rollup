@@ -156,9 +156,12 @@ class RasterProcessor:
         self.messages.addMessage("creating output files")
         self.create_output_file()
         self.create_output_footprints()
-        for rasterid in self.get_current_poly_rasterids():
-            self.join_zonalstats_by_rasterid(rasterid)
-            self.join_footprints_by_rasterid(rasterid)
+
+        # enumerate and pass index so that output files are clean
+        for i,rasterid in enumerate(self.get_current_poly_rasterids()):
+            rasteridx = i+1 # start enumerating rasters at 1
+            self.join_zonalstats_by_rasterid(rasterid, rasteridx)
+            self.join_footprints_by_rasterid(rasterid, rasteridx)
 
     def precheck_db(self):
         """
@@ -712,11 +715,12 @@ class RasterProcessor:
         out_name = os.path.basename(self.outfootprints)
         out_sref = arcpy.SpatialReference('Geographic Coordinate Systems/World/WGS 1984')
         arcpy.CreateFeatureclass_management(out_path, out_name, 'POLYGON', spatial_reference=out_sref)
+        arcpy.AddField_management(self.outfootprints, "rasterid", "SHORT")
         arcpy.AddField_management(self.outfootprints, "name", "TEXT", 255)
         arcpy.AddField_management(self.outfootprints, "date", "DATE")
         arcpy.DeleteField_management (self.outfootprints, "id")
 
-    def join_zonalstats_by_rasterid(self, rasterid):
+    def join_zonalstats_by_rasterid(self, rasterid, rasteridx):
         """
         Joins the zonal stats data to a copy of the input polygon.
         Attribute table is wide so columns are added as needed
@@ -729,10 +733,10 @@ class RasterProcessor:
         update_fields = [self.zonefield]
 
         # create necessary fields
-        arcpy.AddField_management(self.outpoly, "count_{}".format(rasterid), "LONG")
-        update_fields.append("count_{}".format(rasterid))
+        arcpy.AddField_management(self.outpoly, "count_{}".format(rasteridx), "LONG")
+        update_fields.append("count_{}".format(rasteridx))
         for fieldname in ["min","max","mean","median","std"]:
-            fieldname_wid = "{}_{}".format(fieldname, rasterid)
+            fieldname_wid = "{}_{}".format(fieldname, rasteridx)
             update_fields.append(fieldname_wid)
             arcpy.AddField_management(self.outpoly, fieldname_wid, "FLOAT")
 
@@ -763,7 +767,7 @@ class RasterProcessor:
                 row[6] = results_dict[feature_id][5] # std
                 cursor.updateRow(row)
 
-    def join_footprints_by_rasterid(self, rasterid):
+    def join_footprints_by_rasterid(self, rasterid, rasteridx):
         """
         Join the polygon, name, and date fields to the output raster polygon shapefile by rasterid
 
@@ -779,8 +783,8 @@ class RasterProcessor:
                 WHERE l.id = ?
             """
             results = dbc.execute(select_sql, (rasterid,), 'one')
-            with arcpy.da.InsertCursor(self.outfootprints, ['SHAPE@WKT', 'name', 'date']) as cursor:
-                cursor.insertRow(results)
+            with arcpy.da.InsertCursor(self.outfootprints, ['rasterid','SHAPE@WKT', 'name', 'date']) as cursor:
+                cursor.insertRow((rasteridx,)+results)
 
 
 class Toolbox(object):
