@@ -61,7 +61,7 @@ class DBC:
             self.conn.execute("PRAGMA foreign_keys = 1")
 
         except sqlite3.Error as e:
-            self.messages.addError(e)
+            self.messages.addMessage(e)
             self.conn = None
 
     def execute(self, sql, params=(), returntype=None):
@@ -91,7 +91,7 @@ class DBC:
                     return cursor.fetchone()
 
             except sqlite3.Error as e:
-                self.messages.addError(e)
+                self.messages.addWarningMessage(e)
                 return
 
     def executemany(self, sql, params=()):
@@ -108,7 +108,7 @@ class DBC:
                 cursor.executemany(sql, params)
 
             except sqlite3.Error as e:
-                self.messages.addError(e)
+                self.messages.addWarningMessage(e)
                 return
 
 
@@ -557,12 +557,15 @@ class RasterProcessor:
 
         # load the rasters via numpy
         np_poly_raster = arcpy.RasterToNumPyArray(temp_raster2, lowerLeft, nodata_to_value=-1)
-        np_raster = arcpy.RasterToNumPyArray(arcpyraster, lowerLeft, nodata_to_value=raster_nodataval)
+        np_raster = arcpy.RasterToNumPyArray(arcpyraster, lowerLeft)
+        isnull_raster = arcpy.sa.IsNull(arcpyraster)
+        np_isnull = arcpy.RasterToNumPyArray(isnull_raster, lowerLeft)
 
         # there's a bug in arcgis 10 related to background geoprocessing where snap raster adds 1 extra row
         # if there's an extra row in the numpy array, remove it.
         # https://gis.stackexchange.com/questions/34085/aligning-two-non-coincident-equi-resolution-raster-grids-in-arcgis-desktop/34172#34172
         if np_poly_raster.shape[0]-1 == np_raster.shape[0]:
+            self.messages.addWarningMessage("Rasters mismatched by one row - adjusting")
             np_poly_raster = np_poly_raster[:-1, :]
 
         if np_raster.shape != np_poly_raster.shape:
@@ -584,23 +587,26 @@ class RasterProcessor:
         poly_raster_vals = numpy.unique(np_poly_raster).tolist()
         if -1 in poly_raster_vals: poly_raster_vals.remove(-1)
 
-        # join back the zone name string to the OID, keep as lookup
-        oid_zone_lookup = {}
-        with arcpy.da.SearchCursor(self.poly, [oid_fieldname, self.zonefield]) as cursor:
-            for row in cursor:
-                # if OID occurrs in raster from polygon, add to lookup table
-                if row[0] in poly_raster_vals:
-                    oid_zone_lookup[row[0]] = row[1]
-
+        # zone field removed in favor of OID
+        # # join back the zone name string to the OID, keep as lookup
+        # oid_zone_lookup = {}
+        # with arcpy.da.SearchCursor(self.poly, [oid_fieldname, self.zonefield]) as cursor:
+        #     for row in cursor:
+        #         # if OID occurrs in raster from polygon, add to lookup table
+        #         if row[0] in poly_raster_vals:
+        #             oid_zone_lookup[row[0]] = row[1]
 
         # create statistics on the input raster by unique values
-        for oid in oid_zone_lookup.keys():
+        for oid in poly_raster_vals:
             # filter by unique raster value (e.x. 2)
-            statsdata_wnodata = np_raster[(np_poly_raster == oid)]
-            # filter again and remove nodata values from the raster
-            statsdata = statsdata_wnodata[statsdata_wnodata != raster_nodataval]
+            statsdata = np_raster[(np_poly_raster == oid) & (np_isnull == 0)]
+            if oid == 4:
+                self.messages.addWarningMessage("oid : " + str(oid))
+                self.messages.addMessage(statsdata.size)
+                self.messages.addWarningMessage(numpy.min(statsdata).item())
+                self.messages.addWarningMessage(numpy.max(statsdata).item())
             if statsdata.size != 0:
-                self.zonal_stats_data.append([oid_zone_lookup[oid],
+                self.zonal_stats_data.append([oid,
                                               statsdata.size,
                                               numpy.min(statsdata).item(),
                                               numpy.max(statsdata).item(),
@@ -850,7 +856,11 @@ class ProcessRasters(object):
 
     def isLicensed(self):
         """Set whether tool is licensed to execute."""
-        return True
+        try:
+            arcpy.CheckOutExtension("Spatial")
+            return True
+        except:
+            return False
 
     def updateParameters(self, parameters):
         """Modify the values and properties of parameters before internal
