@@ -598,13 +598,8 @@ class RasterProcessor:
 
         # create statistics on the input raster by unique values
         for oid in poly_raster_vals:
-            # filter by unique raster value (e.x. 2)
+            # filter by unique raster value (e.x. 2) and ignore nodata values
             statsdata = np_raster[(np_poly_raster == oid) & (np_isnull == 0)]
-            if oid == 4:
-                self.messages.addWarningMessage("oid : " + str(oid))
-                self.messages.addMessage(statsdata.size)
-                self.messages.addWarningMessage(numpy.min(statsdata).item())
-                self.messages.addWarningMessage(numpy.max(statsdata).item())
             if statsdata.size != 0:
                 self.zonal_stats_data.append([oid,
                                               statsdata.size,
