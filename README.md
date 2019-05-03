@@ -8,3 +8,5 @@ Tool development was performed and tested on a clean install of ArcGIS Desktop 1
 
 To determine if there are issues with python toolboxes in your current environment, open up ArcGIS desktop, open the catalog panel, right click on any folder, click "New" , and select "Python Toolbox". If an error message appears and no toolbox is created, or if a toolbox appears with a red X icon then you may need to install the arcgis 64 bit background geoprocessing. 
 
+### Instructions
+Full setup instructions can be found in the [Instructions.pdf](https://github.com/NLTGit/raster_to_usng_rollup/blob/master/Instructions.pdf)
